@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no">
+        <title>Cleanup Crew</title>
+        <script src="https://bundle.run/buffer@6.0.3"></script>
+        <script>var Buffer = buffer.Buffer;</script>
+        <script src="https://supertestnet.github.io/bitcoin-chess/js/bitcoinjs-lib.js"></script>
+        <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
+        <script>
+            var cleanup_crew = {
+                waiting: false,
+                network: "regtest",
+                waitSomeTime: num => new Promise( resolve => setTimeout( resolve, num ) ),
+                wait: async () => {
+                    cleanup_crew.waiting = true;
+                    var loop = async () => {
+                        if ( !cleanup_crew.waiting ) return;
+                        await cleanup_crew.waitSomeTime( 10 );
+                        return await loop();
+                    }
+                    return await loop();
+                },
+                reverseHexString: s => s.match( /[a-fA-F0-9]{2}/g ).reverse().join( '' ),
+                decodeCompactSize: compact_size => {
+                    var reverseHexString = cleanup_crew.reverseHexString;
+                    var first_byte = compact_size.substring( 0, 2 ).toLowerCase();
+                    var size = Number( BigInt( `0x${reverseHexString( compact_size.substring( 0, 2 ) )}` ) );
+                    var actual_compact_size = compact_size.substring( 0, 2 );
+                    if ( first_byte === "fd" ) {
+                        var rest = compact_size.substring( 2, 2 + 4 ).toLowerCase();
+                        var size = Number( BigInt( `0x${reverseHexString( rest )}` ) );
+                        var actual_compact_size = compact_size.substring( 0, 6 );
+                    }
+                    if ( first_byte === "fe" ) {
+                        var rest = compact_size.substring( 2, 2 + 8 ).toLowerCase();
+                        var size = Number( BigInt( `0x${reverseHexString( rest )}` ) );
+                        var actual_compact_size = compact_size.substring( 0, 10 );
+                    }
+                    if ( first_byte === "ff" ) {
+                        var rest = compact_size.substring( 2 ).toLowerCase();
+                        var size = Number( BigInt( `0x${reverseHexString( rest )}` ) );
+                        var actual_compact_size = compact_size;
+                    }
+                    return { size, first_byte, actual_compact_size }
+                },
+                parseTransactions: ( num_of_txs, txs ) => {
+                    var decodeCompactSize = cleanup_crew.decodeCompactSize;
+                    var rest = txs;
+                    var tx_objects = [];
+                    var loop = rest => {
+                        var tx = {}
+                        tx[ "hex" ] = ``;
+                        tx[ "version" ] = rest.substring( 0, 8 );
+                        tx[ "hex" ] += rest.substring( 0, 8 );
+                        var rest = rest.substring( 8 );
+                        var is_segwit = rest.substring( 0, 4 ) === "0001";
+                        if ( is_segwit ) {
+                            tx[ "segwit_flag" ] = rest.substring( 0, 4 );
+                            tx[ "is_segwit" ] = true;
+                            tx[ "hex" ] += rest.substring( 0, 4 );
+                            rest = rest.substring( 4 );
+                        }
+                        var compact_size = rest.substring( 0, 18 );
+                        var { size, first_byte, actual_compact_size } = decodeCompactSize( compact_size );
+                        tx[ "number_of_inputs" ] = [ size , actual_compact_size ];
+                        tx[ "hex" ] += rest.substring( 0, 2 );
+                        rest = rest.substring( 2 );
+                        if ( first_byte === "fd" ) tx[ "hex" ] += rest.substring( 0, 4 );
+                        if ( first_byte === "fd" ) rest = rest.toString( "hex" ).substring( 4 );
+                        if ( first_byte === "fe" ) tx[ "hex" ] += rest.substring( 0, 8 );
+                        if ( first_byte === "fe" ) rest = rest.substring( 8 );
+                        if ( first_byte === "ff" ) tx[ "hex" ] += rest.substring( 0, 16 );
+                        if ( first_byte === "ff" ) rest = rest.substring( 16 );
+                        var num_of_inputs = size;
+                        var i; for ( i=0; i<num_of_inputs; i++ ) {
+                            tx[ `input_${i}` ] = {txid: rest.substring( 0, 64 ), vout: rest.substring( 64, 64 + 8 )}
+                            tx[ "hex" ] += rest.substring( 0, 64 + 8 );
+                            rest = rest.substring( 64 + 8 );
+                            var compact_size = rest.substring( 0, 18 );
+                            var { size, first_byte, actual_compact_size } = decodeCompactSize( compact_size );
+                            tx[ `input_${i}` ][ "length_of_scriptsig" ] = [ size, actual_compact_size ];
+                            tx[ "hex" ] += rest.substring( 0, 2 );
+                            rest = rest.substring( 2 );
+                            if ( first_byte === "fd" ) tx[ "hex" ] += rest.substring( 0, 4 );
+                            if ( first_byte === "fd" ) rest = rest.toString( "hex" ).substring( 4 );
+                            if ( first_byte === "fe" ) tx[ "hex" ] += rest.substring( 0, 8 );
+                            if ( first_byte === "fe" ) rest = rest.substring( 8 );
+                            if ( first_byte === "ff" ) tx[ "hex" ] += rest.substring( 0, 16 );
+                            if ( first_byte === "ff" ) rest = rest.substring( 16 );
+                            tx[ `input_${i}` ][ "scriptsig" ] = rest.substring( 0, tx[ `input_${i}` ][ "length_of_scriptsig" ][ 0 ] * 2 );
+                            tx[ "hex" ] += rest.substring( 0, tx[ `input_${i}` ][ "length_of_scriptsig" ][ 0 ] * 2 );
+                            rest = rest.substring( tx[ `input_${i}` ][ "length_of_scriptsig" ][ 0 ] * 2 );
+                            tx[ `input_${i}` ][ "sequence" ] = rest.substring( 0, 8 );
+                            tx[ "hex" ] += rest.substring( 0, 8 );
+                            rest = rest.substring( 8 );
+                        }
+                        var compact_size = rest.substring( 0, 18 );
+                        var { size, first_byte, actual_compact_size } = decodeCompactSize( compact_size );
+                        tx[ `num_of_outputs` ] = [ size, actual_compact_size ];
+                        tx[ "hex" ] += rest.substring( 0, 2 );
+                        rest = rest.substring( 2 );
+                        if ( first_byte === "fd" ) tx[ "hex" ] += rest.substring( 0, 4 );
+                        if ( first_byte === "fd" ) rest = rest.toString( "hex" ).substring( 4 );
+                        if ( first_byte === "fe" ) tx[ "hex" ] += rest.substring( 0, 8 );
+                        if ( first_byte === "fe" ) rest = rest.substring( 8 );
+                        if ( first_byte === "ff" ) tx[ "hex" ] += rest.substring( 0, 16 );
+                        if ( first_byte === "ff" ) rest = rest.substring( 16 );
+                        var num_of_outputs = size;
+                        var i; for ( i=0; i<num_of_outputs; i++ ) {
+                            tx[ `output_${i}` ] = {value: rest.substring( 0, 16 )}
+                            tx[ "hex" ] += rest.substring( 0, 16 );
+                            rest = rest.substring( 16 );
+                            var compact_size = rest.substring( 0, 18 );
+                            var { size, first_byte, actual_compact_size } = decodeCompactSize( compact_size );
+                            tx[ `output_${i}` ][ "length_of_scriptPubKey" ] = [ size, actual_compact_size ];
+                            tx[ "hex" ] += rest.substring( 0, 2 );
+                            rest = rest.substring( 2 );
+                            if ( first_byte === "fd" ) tx[ "hex" ] += rest.substring( 0, 4 );
+                            if ( first_byte === "fd" ) rest = rest.toString( "hex" ).substring( 4 );
+                            if ( first_byte === "fe" ) tx[ "hex" ] += rest.substring( 0, 8 );
+                            if ( first_byte === "fe" ) rest = rest.substring( 8 );
+                            if ( first_byte === "ff" ) tx[ "hex" ] += rest.substring( 0, 16 );
+                            if ( first_byte === "ff" ) rest = rest.substring( 16 );
+                            tx[ `output_${i}` ][ "scriptPubKey" ] = scriptPubKey = rest.substring( 0, size * 2 );    
+                            tx[ "hex" ] += rest.substring( 0, size * 2 );
+                            rest = rest.substring( size * 2 );
+                        }
+                        if ( is_segwit ) {
+                            var i; for ( i=0; i<num_of_inputs; i++ ) {
+                                var compact_size = rest.substring( 0, 18 );
+                                var { size, first_byte, actual_compact_size } = decodeCompactSize( compact_size );
+                                tx[ `input_${i}` ][ "num_of_elements_in_witness" ] = [ size, actual_compact_size ];
+                                tx[ `input_${i}` ][ "sizes_of_each_witness_element" ] = [];
+                                tx[ `input_${i}` ][ "witness" ] = [];
+                                tx[ "hex" ] += rest.substring( 0, 2 );
+                                rest = rest.substring( 2 );
+                                if ( first_byte === "fd" ) tx[ "hex" ] += rest.substring( 0, 4 );
+                                if ( first_byte === "fd" ) rest = rest.toString( "hex" ).substring( 4 );
+                                if ( first_byte === "fe" ) tx[ "hex" ] += rest.substring( 0, 8 );
+                                if ( first_byte === "fe" ) rest = rest.substring( 8 );
+                                if ( first_byte === "ff" ) tx[ "hex" ] += rest.substring( 0, 16 );
+                                if ( first_byte === "ff" ) rest = rest.substring( 16 );
+                                var num_of_elements = size;
+                                var j; for ( j=0; j<num_of_elements; j++ ) {
+                                    var compact_size = rest.substring( 0, 18 );
+                                    var { size, first_byte, actual_compact_size } = decodeCompactSize( compact_size );
+                                    tx[ `input_${i}` ][ "sizes_of_each_witness_element" ].push( [ size, actual_compact_size ] );
+                                    tx[ "hex" ] += rest.substring( 0, 2 );
+                                    rest = rest.substring( 2 );
+                                    if ( first_byte === "fd" ) tx[ "hex" ] += rest.substring( 0, 4 );
+                                    if ( first_byte === "fd" ) rest = rest.toString( "hex" ).substring( 4 );
+                                    if ( first_byte === "fe" ) tx[ "hex" ] += rest.substring( 0, 8 );
+                                    if ( first_byte === "fe" ) rest = rest.substring( 8 );
+                                    if ( first_byte === "ff" ) tx[ "hex" ] += rest.substring( 0, 16 );
+                                    if ( first_byte === "ff" ) rest = rest.substring( 16 );
+                                    tx[ `input_${i}` ][ "witness" ].push( rest.substring( 0, size * 2 ) );
+                                    tx[ "hex" ] += rest.substring( 0, size * 2 );
+                                    rest = rest.substring( size * 2 );
+                                }
+                            }
+                        }
+                        tx[ `locktime` ] = rest.substring( 0, 8 );
+                        tx[ "hex" ] += rest.substring( 0, 8 );
+                        rest = rest.substring( 8 );
+                        return [ tx, rest ];
+                    }
+                    var i; for ( i=0; i<num_of_txs; i++ ) {
+                        var [ tx, rest ] = loop( rest );
+                        tx_objects.push( tx );
+                    }
+                    return tx_objects;
+                },
+                getLegacySighash: ( txhex, prev_tx, input_num, sigflag, redeem_script ) => {
+                    var parseTransactions = cleanup_crew.parseTransactions;
+                    //Create a copy of the transaction (txCopy)
+                    var txcopy = parseTransactions( 1, txhex )[ 0 ];
+                    //For all inputs in txCopy, set the scriptSig to empty (length 0)
+                    var i; for ( i=0; i<txcopy.number_of_inputs[ 0 ]; i++ ) {
+                        txcopy[ `input_${i}` ].scriptsig = "";
+                        var length_of_scriptsig = txcopy[ `input_${i}` ].scriptsig.length / 2;
+                        var length_of_scriptsig_hex = length_of_scriptsig.toString( 16 );
+                        if ( length_of_scriptsig_hex.length % 2 ) length_of_scriptsig_hex = "0" + length_of_scriptsig_hex;
+                        txcopy[ `input_${i}` ].length_of_scriptsig = [ length_of_scriptsig, length_of_scriptsig_hex ];
+                    }
+                    //Set the scriptSig of the current input to its scriptPubKey (or its redeemScript, if a p2sh output is being spent)
+                    txcopy[ `input_${input_num}` ].scriptsig = bitcoinjs.Transaction.fromHex( prev_tx ).outs[ bitcoinjs.Transaction.fromHex( txhex ).ins[ input_num ].index ].script.toHex();
+                    if ( redeem_script ) txcopy[ `input_${input_num}` ].scriptsig = redeem_script;
+                    var length_of_scriptsig = txcopy[ `input_${input_num}` ].scriptsig.length / 2;
+                    var length_of_scriptsig_hex = length_of_scriptsig.toString( 16 );
+                    if ( length_of_scriptsig_hex.length % 2 ) length_of_scriptsig_hex = "0" + length_of_scriptsig_hex;
+                    txcopy[ `input_${input_num}` ].length_of_scriptsig = [ length_of_scriptsig, length_of_scriptsig_hex ];
+
+                    //TODO: Remove everything up to and including the last executed OP_CODESEPARATOR (or the entire script before the signature check if none executed)
+                    //TODO: Remove all remaining OP_CODESEPARATOR opcodes
+                    //TODO: Apply FindAndDelete: delete any occurrences of the current signature (exact byte match, excluding the sighash byte suffix) from the current scriptsig
+                    //If the ANYONECANPAY flag is set, apply the following additional modifications
+                    if ( sigflag === "81" || sigflag === "82" || sigflag === "83" ) {
+                        //--- Set the input vector to contain only the current input
+                        var current_input = JSON.parse( JSON.stringify( txcopy[ `input_${input_num}` ] ) );
+                        var i; for ( i=0; i<txcopy.number_of_inputs[ 0 ]; i++ ) delete txcopy[ `input_${i}` ];
+                        txcopy[ `input_${input_num}` ] = current_input;
+                        txcopy.number_of_inputs = [ 1, "01" ];
+                    }
+                    //If the SIGHASH_NONE flag is set, apply the following additional modifications
+                    if ( sigflag === "02" || sigflag === "82" ) {
+                        //--- Set the output vector to empty
+                        var i; for ( i=0; i<txcopy.num_of_outputs[ 0 ]; i++ ) delete txcopy[ `output_${i}` ];
+                        txcopy.num_of_outputs = [ 0, "00" ];
+                        //--- For all inputs except the current one, set nSequence to 0
+                        var current_sequence = txcopy[ `input_${input_num}` ].sequence;
+                        var i; for ( i=0; i<txcopy.number_of_inputs[ 0 ]; i++ ) txcopy[ `input_${i}` ].sequence = "00000000";
+                        txcopy[ `input_${input_num}` ].sequence = current_sequence;
+                    }
+                    //If the SIGHASH_SINGLE flag is set, apply the following additional modifications
+                    if ( sigflag === "03" || sigflag === "83" ) {
+                        //--- If the current input number is greater than the number of outputs, the resulting digest is "0".repeat( 62 ) + "01";
+                        if ( input_num >= bitcoinjs.Transaction.fromHex( txhex ).outs.length ) return "01" + "0".repeat( 62 );
+                        //--- Otherwise, for every output index j, where j does not equal the current output number, set amount to 0xffffffffffffffff (8-byte little-endian, interpreted as -1), and set scriptPubKey to empty (length 0),
+                        var i; for ( i=0; i<txcopy.num_of_outputs[ 0 ]; i++ ) {
+                            if ( i !== input_num ) {
+                                txcopy[ `output_${i}` ].value = "ffffffffffffffff";
+                                txcopy[ `output_${i}` ].scriptPubKey = "";
+                            }
+                        }
+                        //--- ...and resize the output vector to the current input number plus 1...
+                        if ( txcopy.num_of_outputs[ 0 ] > input_num + 1 ) {
+                            var i; for ( i=0; i<txcopy.num_of_outputs[ 0 ]; i++ ) {
+                                if ( i > input_num + 1 ) delete txcopy[ `output_${i}` ];
+                                var num_of_outputs_as_hex = ( input_num + 1 ).toString( 16 );
+                                if ( num_of_outputs_as_hex.length % 2 ) num_of_outputs_as_hex = "0" + num_of_outputs_as_hex;
+                                txcopy.num_of_outputs = [ input_num + 1, num_of_outputs_as_hex ];
+                            }
+                        }
+                        //--- ...and, for all inputs except the current one, set nSequence to 0
+                        var current_sequence = txcopy[ `input_${input_num}` ].sequence;
+                        var i; for ( i=0; i<txcopy.number_of_inputs[ 0 ]; i++ ) txcopy[ `input_${i}` ].sequence = "00000000";
+                        txcopy[ `input_${input_num}` ].sequence = current_sequence;
+                    }
+                    //Now it is time to serlialize the preimage, so create an empty string
+                    var preimage = "";
+                    var parsed_tx = txcopy;
+                    //Append the 4 byte nVersion (little-endian)
+                    preimage += parsed_tx.version;
+                    //Append a VarInt (number of inputs)
+                    preimage += parsed_tx.number_of_inputs[ 1 ];
+                    //For each input:
+                    var i; for ( i=0; i<parsed_tx.number_of_inputs[ 0 ]; i++ ) {
+                        //--- Append a 32 byte prevout hash
+                        preimage += parsed_tx[ `input_${i}` ].txid;
+                        //--- Append a 4 byte prevout index (little-endian)
+                        preimage += parsed_tx[ `input_${i}` ].vout;
+                        //--- Append a VarInt (scriptSig length)
+                        preimage += parsed_tx[ `input_${i}` ].length_of_scriptsig[ 1 ];
+                        //--- Append this input's scriptSig bytes
+                        preimage += parsed_tx[ `input_${i}` ].scriptsig;
+                        //--- Append a 4 byte nSequence (little-endian)
+                        preimage += parsed_tx[ `input_${i}` ].sequence;
+                    }
+                    //Append the VarInt (number of outputs)
+                    preimage += parsed_tx.num_of_outputs[ 1 ];
+                    //For each output:
+                    var i; for ( i=0; i<parsed_tx.num_of_outputs[ 0 ]; i++ ) {
+                        //--- Append an 8 byte amount (little-endian)
+                        preimage += parsed_tx[ `output_${i}` ].value;
+                        //--- Append a VarInt (scriptPubKey length)
+                        preimage += parsed_tx[ `output_${i}` ].length_of_scriptPubKey[ 1 ];
+                        //--- Append this output's scriptPubKey bytes
+                        preimage += parsed_tx[ `output_${i}` ].scriptPubKey;
+                    }
+                    //Append the transaction's 4 byte nLockTime (little-endian)
+                    preimage += parsed_tx.locktime;
+                    //Append the 4 byte sigflag (little-endian)
+                    preimage += sigflag + "000000";
+                    var sighash = bitcoinjs.crypto.hash256( Buffer.from( preimage, "hex" ) );
+                    return sighash.toString( "hex" );
+                },
+                getLegacyAddress: ( network ) => {
+                    var privkey = bitcoinjs.ECPair.makeRandom().__D;
+                    var keypair = bitcoinjs.ECPair.fromPrivateKey( privkey );
+                    var result = bitcoinjs.crypto.hash160( keypair.publicKey ).toString( "hex" );
+                    result = Buffer.from( "76a914" + result + "88ac", "hex" );
+                    var address_data = bitcoinjs.payments.p2pkh({ output: result, network: bitcoinjs.networks[ network ] });
+                    var address = address_data.address;
+                    return [ address, keypair ];
+                },
+                prepareCovenant: ( network, extra_pubkey, invert_checksig ) => {
+                    //note that 300602010102010103 hashes to 0f639fd6fac821bba3eedf60674b25467e945a51
+                    var covenant_script = [ "OP_DUP", "OP_RIPEMD160", "0f639fd6fac821bba3eedf60674b25467e945a51", "OP_EQUALVERIFY", "03784b6ebe47edcb0b81092d016c054a4375f9d0b73ca68afdf6c97614c83b83df", "OP_CHECKSIG" ];
+                    if ( extra_pubkey ) covenant_script.unshift( extra_pubkey, "OP_CHECKSIGVERIFY" );
+                    if ( invert_checksig ) covenant_script.push( "OP_NOT" );
+                    var script = bitcoinjs.script.fromASM( covenant_script.join( " " ) );
+                    var scripthash = bitcoinjs.crypto.hash160( script ).toHex();
+                    var covenant_address = bitcoinjs.address.fromOutputScript( Buffer.from( "a914" + scripthash + "87", "hex" ), bitcoinjs.networks[ network ] );
+                    return [ covenant_address, covenant_script ];
+                },
+                prepareTx: ( network, inputs, outputs ) => {
+                    var psbt = new bitcoinjs.Psbt({ network: bitcoinjs.networks[ network ] });
+                    inputs.forEach( input => {
+                        psbt.addInput({
+                            hash: input.txid,
+                            index: input.vout,
+                        });
+                    });
+                    outputs.forEach( output => {
+                        if ( output.hasOwnProperty( "address" ) ) {
+                            psbt.addOutput({
+                                address: output.address,
+                                value: output.value,
+                            });
+                        } else {
+                            psbt.addOutput({
+                                script: output.script,
+                                value: output.value,
+                            });
+                        }
+                    });
+                    return psbt.data.globalMap.unsignedTx.toBuffer().toString( "hex" );
+                },
+                demoFOICovenant: async network => {
+                    //Display initial instructions
+                    $( '.instructions' ).innerHTML = `
+                        <p>In this demo, we will create a very basic covenant called an FOI covenant, which stands for "Fewer Outputs than Inputs."</p>
+                        <p>The covenant will consist of an anyone_can_spend bitcoin address with one restriction: its script will inspect the number of outputs and inputs in any transaction that tries to spend money that enters that address, and the script will fail unless the number of outputs is smaller than the number of inputs.</p>
+                        <p>Click ok when you are ready.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Prepare the covenant
+                    var [ covenant_address, covenant_script ] = cleanup_crew.prepareCovenant( network );
+                    var covenant_scriptsig = "09300602010102010103";
+                    var final_redeem_script = bitcoinjs.script.fromASM( covenant_script.join( " " ) ).toHex();
+                    var final_scriptsig = covenant_scriptsig + bitcoinjs.script.fromASM( final_redeem_script ).toHex();
+
+                    //Display the covenant address
+                    $( '.instructions' ).innerHTML = `
+                        <p>Here is the covenant address:</p>
+                        <p>${covenant_address}</p>
+                        <p>It is an anyone_can_spend address, with one restriction: the script requires the transaction's output count to be smaller than its input count. That is a restriction on the outputs, and thus a very basic covenant.</p>
+                        <p>To prove this, let us fund it and try to spend the money in a transaction *without* fewer inputs than outputs, just to see it fail, i.e. just to see the script enforce the covenant.</p>
+                        <p>Fund the address with 10k sats on ${network} (this will become a second input to our transaction, thus making it valid) and click ok when you are done.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Get the funding transaction data
+                    var covenant_funding_txhex = prompt( `enter the hex of the funding transaction` );
+                    var tx = bitcoinjs.Transaction.fromHex( covenant_funding_txhex );
+                    var covenant_txinfo = {
+                        txid: tx.getId(),
+                    }
+                    tx.outs.forEach( ( output, index ) => {
+                        var calculated_address = bitcoinjs.address.fromOutputScript( output.script, bitcoinjs.networks[ network ] );
+                        if ( calculated_address !== covenant_address ) return;
+                        covenant_txinfo.vout = index;
+                        covenant_txinfo.amnt = output.value;
+                    });
+
+                    //Get a destination address
+                    var destino = prompt( `Enter an address where you want the covenant-encumbered sats to go\n\nIf you don't have one handy, a test address has been provided`, 'n3qUi7LfcVyXaZQULJxnVFAsmpWKedpC65' );
+
+                    //Prepare an invalid transaction
+                    var inputs = [{
+                        txid: covenant_txinfo.txid,
+                        vout: covenant_txinfo.vout,
+                    }];
+                    var outputs = [{
+                        address: destino,
+                        value: covenant_txinfo.amnt - 500,
+                    }];
+                    var invalid_txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var invalid_tx = bitcoinjs.Transaction.fromHex( invalid_txhex );
+
+                    //Add the covenant's scriptsig
+                    var invalid_scriptsig = final_scriptsig;
+                    invalid_tx.ins[ 0 ].script = Buffer.from( invalid_scriptsig, "hex" );
+
+                    //Display the now-signed invalid transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Try (and fail) to broadcast this transaction, which has 1 input and 1 output. It *would* be valid if not for the covenant in the redeem script, which requires *fewer* outputs than inputs.</p>
+                        <p>${invalid_tx.toHex()}</p>
+                        <p>Broadcast the transaction on ${network} and click ok when it inevitably fails with an error.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Create a legacy address
+                    var [ address, keypair ] = cleanup_crew.getLegacyAddress( network );
+                    var pubkey = keypair.publicKey.toString( "hex" );
+
+                    //Display instructions
+                    $( '.instructions' ).innerHTML = `
+                        <p>Now we will create a *valid* spending transaction, by adding one extra input, so that the transaction has fewer outputs than inputs, thus satisfying the covenant</p>
+                        <p>Here is a "normal" bitcoin address -- send it 10k sats on ${network} and click ok when you are done.</p>
+                        <p>${address}</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Get the funding transaction data
+                    var normal_funding_txhex = prompt( `enter the hex of the second funding transaction (i.e. the one you just created` );
+                    var tx = bitcoinjs.Transaction.fromHex( normal_funding_txhex );
+                    var normal_txinfo = {
+                        txid: tx.getId(),
+                    }
+                    tx.outs.forEach( ( output, index ) => {
+                        var calculated_address = bitcoinjs.address.fromOutputScript( output.script, bitcoinjs.networks[ network ] );
+                        if ( calculated_address !== address ) return;
+                        normal_txinfo.vout = index;
+                        normal_txinfo.amnt = output.value;
+                    });
+
+                    //Send money to that address on regtest
+                    var txid0 = normal_txinfo.txid;
+                    var vout0 = normal_txinfo.vout;
+                    var amnt0 = normal_txinfo.amnt;
+                    var thex0 = normal_funding_txhex;
+
+                    //Prepare the covenant's funding info
+                    var txid1 = covenant_txinfo.txid;
+                    var vout1 = covenant_txinfo.vout;
+                    var amnt1 = covenant_txinfo.amnt;
+                    var thex1 = covenant_funding_txhex;
+
+                    //Create unsigned covenant tx
+                    var inputs = [{
+                        txid: txid0,
+                        vout: vout0,
+                    },{
+                        txid: txid1,
+                        vout: vout1,
+                    }];
+                    var outputs = [{
+                        address: destino,
+                        value: amnt0 + amnt1 - 500,
+                    }];
+                    var txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var tx = bitcoinjs.Transaction.fromHex( txhex );
+
+                    //Sign the first input
+                    var prev_tx = thex0;
+                    var input_num = 0;
+                    var sigflag = "01";
+                    var sighash0 = cleanup_crew.getLegacySighash( txhex, prev_tx, input_num, sigflag );
+                    var sig0 = keypair.sign( Buffer.from( sighash0, "hex" ), true );
+                    var sigflag0 = 1;
+                    sig0 = bitcoinjs.script.signature.encode( sig0, sigflag0 ).toString( "hex" );
+
+                    //Add the first input's scriptsig
+                    var scriptsig0 = ( sig0.length / 2 ).toString( 16 ) + sig0 + "21" + pubkey;
+                    tx.ins[ 0 ].script = Buffer.from( scriptsig0, "hex" );
+
+                    //Add the covenant's scriptsig
+                    var scriptsig1 = final_scriptsig;
+                    tx.ins[ 1 ].script = Buffer.from( scriptsig1, "hex" );
+
+                    //Display the now-signed transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Broadcast this transaction:</p>
+                        <p>${tx.toHex()}</p>
+                        <p>Voila! You created a bitcoin address that enforced a basic fewer-outputs-than-inputs covenant on bitcoin, with no soft fork required!</p>
+                    `;
+                    window.scrollTo( 0, 0 );
+                },
+                demoCleanupCovenant: async network => {
+                    //Display initial instructions
+                    $( '.instructions' ).innerHTML = `
+                        <p>In this demo, we will create an advanced covenant called a cleanup covenant, designed to automatically pay people who consume many outputs from the utxo set.</p>
+                        <p>The covenant will consist of a bitcoin address with two restrictions: in any transaction that tries to spend money locked to this address, the number of outputs must be smaller than the number of inputs, and it must have a signature from an extra pubkey too.</p>
+                        <p>Then we will publish an anyone_can_pay signature for that extra pubkey that specifies all the outputs, but not the inputs. Specifically, it will require 98 unspendable op_return outputs and 1 spendable "bounty address" that is truly anyone_can_spend. We expect someone to come along and take the bounty for himself or herself.</p>
+                        <p>Once we fund the covenant and publish the signature, anyone can take the money from the covenant and use it to fund (and then sweep) the bounty address, but only if their transaction consumes 100+ inputs from the utxo set and creates 1 spendable output (which is the bounty itself).</p>
+                        <p>Click ok when you are ready.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Prepare the covenant
+                    var extra_privkey = bitcoinjs.ECPair.makeRandom().__D;
+                    var extra_keypair = bitcoinjs.ECPair.fromPrivateKey( extra_privkey );
+                    var extra_pubkey = extra_keypair.publicKey.toString( "hex" );
+                    var [ covenant_address, covenant_script ] = cleanup_crew.prepareCovenant( network, extra_pubkey );
+                    var covenant_scriptsig = "09300602010102010103";
+                    var final_redeem_script = bitcoinjs.script.fromASM( covenant_script.join( " " ) ).toHex();
+
+                    //Display the covenant address
+                    $( '.instructions' ).innerHTML = `
+                        <p>Here is the covenant address:</p>
+                        <p>${covenant_address}</p>
+                        <p>It will be an anyone_can_spend address as soon as we publish the anyone_can_pay signature, which we will do after we fund the covenant. The anyone_can_pay signature will require anyone who wants to use it to create 99 outputs -- only 1 of them will end up in the utxo set, the others are op_returns. But users can't simply spend the money by creating the right set of outputs -- the *covenant* requires the number of outputs to be *fewer* than the number of inputs, which means no spend transaction using the ACP signature is valid unless it consumes 100+ inputs. So this covenant will pay people to clean up the utxo set. It's a cleanup covenant.</p>
+                        <p>To illustrate how it works, let us fund it and try to spend the money in a transaction with *only one* input, just to see it fail, i.e. just to see the script enforce the covenant.</p>
+                        <p>Fund the address with 10k sats on ${network} (this will become a second input to our transaction, thus making it valid) and click ok when you are done. Here is the covenant address again:</p>
+                        <p>${covenant_address}</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Get the funding transaction data
+                    var covenant_funding_txhex = prompt( `enter the hex of the funding transaction` );
+                    var tx = bitcoinjs.Transaction.fromHex( covenant_funding_txhex );
+                    var covenant_txinfo = {
+                        txid: tx.getId(),
+                    }
+                    tx.outs.forEach( ( output, index ) => {
+                        var calculated_address = bitcoinjs.address.fromOutputScript( output.script, bitcoinjs.networks[ network ] );
+                        if ( calculated_address !== covenant_address ) return;
+                        covenant_txinfo.vout = index;
+                        covenant_txinfo.amnt = output.value;
+                    });
+
+                    //Prepare an anyone_can_spend address
+                    var acs_script = bitcoinjs.script.fromASM( 'OP_TRUE' );
+                    var acs_scripthash = bitcoinjs.crypto.hash160( acs_script ).toHex();
+                    var acs_address = bitcoinjs.address.fromOutputScript( Buffer.from( "a914" + acs_scripthash + "87", "hex" ), bitcoinjs.networks[ network ] );
+                    var acs_scriptsig = "0151";
+
+                    //Prepare a tx with that acs_address as an output plus 99 op_returns, so you can make the ACP sig
+                    var inputs = [{
+                        txid: covenant_txinfo.txid,
+                        vout: covenant_txinfo.vout,
+                    }];
+                    var required_outputs = [{
+                        address: acs_address,
+                        value: covenant_txinfo.amnt - 5_000,
+                    }];
+                    var i; for ( i=0; i<98; i++ ) required_outputs.push({
+                        script: bitcoinjs.script.fromASM( 'OP_RETURN' ),
+                        value: 0,
+                    });
+                    var acp_txhex = cleanup_crew.prepareTx( network, inputs, required_outputs );
+
+                    //Make the ACP sig
+                    var prev_tx = covenant_funding_txhex;
+                    var input_num = 0;
+                    var sigflag = "81";
+                    var redeem_script = final_redeem_script;
+                    var acp_sighash = cleanup_crew.getLegacySighash( acp_txhex, prev_tx, input_num, sigflag, redeem_script );
+                    var acp_sig = extra_keypair.sign( Buffer.from( acp_sighash, "hex" ), true );
+                    var acp_sigflag = 1 | 128;
+                    acp_sig = bitcoinjs.script.signature.encode( acp_sig, acp_sigflag ).toString( "hex" );
+                    var length_of_acp_sig = acp_sig.length / 2;
+                    var length_of_acp_sig_in_hex = length_of_acp_sig.toString( 16 );
+                    if ( length_of_acp_sig_in_hex.length % 2 ) length_of_acp_sig_in_hex = "0" + length_of_acp_sig_in_hex;
+
+                    //Create a legacy address for funding 99 outputs for user later
+                    var [ ninety_nine_output_maker, nn_keypair ] = cleanup_crew.getLegacyAddress( network );
+                    var nn_pubkey = nn_keypair.publicKey.toString( "hex" );
+
+                    //Display instructions about creating 99 utxos
+                    $( '.instructions' ).innerHTML = `
+                        <p>The covenant will require us to consume 100+ utxos as inputs. However, 100 utxos do not necessarily exist yet on your regtest network. In fact, this app only knows 1 utxo that definitely exists: the one locked to the covenant address. So now we will make 99 more, so that a transaction we'll create later can consume them.</p>
+                        <p>Fund the address below with 56,785 sats on ${network}. That is 99 * 540 + 3,325. The 99 is for the 99 utxos, each of which will be funded with 540 sats, which is the dust limit for the types of addresses we're going to create. The extra 3,325 will pay for mining fees.</p>
+                        <p>${ninety_nine_output_maker}</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Get the funding transaction data
+                    var nn_funding_txhex = prompt( `enter the hex of the funding transaction` );
+                    var tx = bitcoinjs.Transaction.fromHex( nn_funding_txhex );
+                    var nn_txinfo = {
+                        txid: tx.getId(),
+                    }
+                    tx.outs.forEach( ( output, index ) => {
+                        var calculated_address = bitcoinjs.address.fromOutputScript( output.script, bitcoinjs.networks[ network ] );
+                        if ( calculated_address !== ninety_nine_output_maker ) return;
+                        nn_txinfo.vout = index;
+                        nn_txinfo.amnt = output.value;
+                    });
+
+                    //Prepare a tx that creates 99 outputs
+                    var inputs = [{
+                        txid: nn_txinfo.txid,
+                        vout: nn_txinfo.vout,
+                    }];
+                    var outputs = [];
+                    var i; for ( i=0; i<99; i++ ) outputs.push({
+                        address: acs_address,
+                        value: 540,
+                    });
+                    var nn_txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var nn_tx = bitcoinjs.Transaction.fromHex( nn_txhex );
+
+                    //Sign the first input
+                    var prev_tx = nn_funding_txhex;
+                    var input_num = 0;
+                    var sigflag = "01";
+                    var nn_sighash = cleanup_crew.getLegacySighash( nn_txhex, prev_tx, input_num, sigflag );
+                    var nn_sig = nn_keypair.sign( Buffer.from( nn_sighash, "hex" ), true );
+                    var nn_sigflag = 1;
+                    nn_sig = bitcoinjs.script.signature.encode( nn_sig, nn_sigflag ).toString( "hex" );
+
+                    //Add the first input's scriptsig
+                    var nn_scriptsig = ( nn_sig.length / 2 ).toString( 16 ) + nn_sig + "21" + nn_pubkey;
+                    nn_tx.ins[ 0 ].script = Buffer.from( nn_scriptsig, "hex" );
+
+                    //Get the txid for use later
+                    var nn_txid = nn_tx.getId();
+
+                    //Display the now-signed transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Broadcast this transaction:</p>
+                        <p>${nn_tx.toHex()}</p>
+                        <p>Now there are 100 outputs for us to consume later -- 99 that we just created plus the 1 in the covenant address. Our next step is to create a transaction that tries to spend the covenant-encumbered sats, but it will only consume 99 total utxos, not the 100+ required by the covenant. This transaction will be invalid, but we will try it anyway, just to see it fail, i.e. just to see the script enforce the covenant.</p>
+                        <p>Click ok to continue.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Get a destination address
+                    var destino = prompt( `Enter an address where you want the covenant-encumbered sats to go\n\nIf you don't have one handy, a test address has been provided`, 'n3qUi7LfcVyXaZQULJxnVFAsmpWKedpC65' );
+
+                    //Prepare an invalid transaction
+                    var inputs = [{
+                        txid: covenant_txinfo.txid,
+                        vout: covenant_txinfo.vout,
+                    }];
+                    var i; for ( i=98; i>0; i-- ) {
+                        inputs.unshift({
+                            txid: nn_txid,
+                            vout: i,
+                        });
+                    }
+                    var invalid_txhex = cleanup_crew.prepareTx( network, inputs, required_outputs );
+                    var invalid_tx = bitcoinjs.Transaction.fromHex( invalid_txhex );
+
+                    //Add the covenant's scriptsig
+                    var invalid_scriptsig = covenant_scriptsig + length_of_acp_sig_in_hex + acp_sig + bitcoinjs.script.fromASM( final_redeem_script ).toHex();
+                    invalid_tx.ins[ invalid_tx.ins.length - 1 ].script = Buffer.from( invalid_scriptsig, "hex" );
+
+                    //Add a scriptsig for every other input
+                    var i; for ( i=0; i<98; i++ ) invalid_tx.ins[ i ].script = Buffer.from( acs_scriptsig, "hex" );
+
+                    //Display the now-signed invalid transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Try (and fail) to broadcast this transaction, which has 99 inputs and 99 outputs. It *would* be valid if not for the covenant in the redeem script, which requires 100+ inputs because the ACP sig requires 99 outputs.</p>
+                        <p>${invalid_tx.toHex()}</p>
+                        <p>Broadcast the transaction on ${network} and click ok when it inevitably fails with an error.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Display instructions
+                    $( '.instructions' ).innerHTML = `
+                        <p>Now we will create a *valid* spending transaction, by consuming all 100 inputs we've created rather than only 99 of them -- then the transaction will have fewer outputs than inputs, thus satisfying the covenant.</p>
+                        <p>Click ok to continue.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
+                    await cleanup_crew.wait();
+
+                    //Create unsigned covenant tx
+                    inputs.unshift({
+                        txid: nn_txid,
+                        vout: 0,
+                    });
+                    var txhex = cleanup_crew.prepareTx( network, inputs, required_outputs );
+                    var tx = bitcoinjs.Transaction.fromHex( txhex );
+
+                    //Add the covenant's scriptsig
+                    var final_scriptsig = covenant_scriptsig + length_of_acp_sig_in_hex + acp_sig + bitcoinjs.script.fromASM( final_redeem_script ).toHex();
+                    tx.ins[ tx.ins.length - 1 ].script = Buffer.from( final_scriptsig, "hex" );
+
+                    //Add a scriptsig for every other input
+                    var i; for ( i=0; i<99; i++ ) tx.ins[ i ].script = Buffer.from( acs_scriptsig, "hex" );
+
+                    //Display the now-signed transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Broadcast this transaction:</p>
+                        <p>${tx.toHex()}</p>
+                        <p>Voila! You created a bitcoin address that enforced a cleanup covenant -- an address that anyone can spend from with its anyone_can_pay signature, but only in a transaction that consumes 100+ inputs and creates only 1 spendable output.</p>
+                    `;
+                    window.scrollTo( 0, 0 );
+                },
+            }
+        </script>
+        <style>
+            * {
+                box-sizing: border-box;
+                font-size: 1.15rem;
+                font-family: Arial, sans-serif;
+            }
+            html {
+                max-width: 800px;
+                padding: 3rem 1rem;
+                margin: auto;
+                line-height: 1.25;
+                padding: 0;
+            }
+            body {
+                margin: 3rem 1rem;
+                word-wrap: break-word;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+            h2 {
+                font-size: 1.5rem;
+            }
+            input {
+                line-height: 1.25;
+                width: 100%;
+                height: 1.8rem;
+                font-size: 1.15rem;
+                border: 1px solid grey;
+            }
+            .hidden {
+                display: none !important;
+            }
+            .instructions_div {
+                background-color: #cccccc;
+                padding: 1rem;
+            }
+            .instructions_div * {
+                font-family: monospace;
+            }
+            @media screen and (max-width: 600px) {
+            }
+        </style>
+        <script>
+            var $ = document.querySelector.bind( document );
+            var $$ = document.querySelectorAll.bind( document );
+            var url_params = new URLSearchParams( window.location.search );
+            var url_keys = url_params.keys();
+            var $_GET = {}
+            for ( var key of url_keys ) $_GET[ key ] = url_params.get( key );
+            var hash_arr = window.location.href.substring( window.location.href.indexOf( "#" ) ).split( "#" );
+            hash_arr.splice( 0, 1 );
+            var $_HASH = {}
+            hash_arr.forEach( item => {
+                var vals = item.split( "=" );
+                $_HASH[ vals[ 0 ] ] = vals[ 1 ];
+            });
+        </script>
+    </head>
+    <body>
+        <h1>Cleanup Crew</h1>
+        <p><button class="foi_covenant">Basic covenant</button> <button class="cleanup_covenant">Cleanup covenant</button></p>
+        <div class="instructions_div">
+            <p>Instructions:</p>
+            <div class="instructions">
+                <p>Pick a covenant to demo -- further instructions will appear here</p>
+            </div>
+        </div>
+        <script>
+            $( '.foi_covenant' ).onclick = async () => {
+                var network = cleanup_crew.network;
+                cleanup_crew.demoFOICovenant( network );
+            }
+            $( '.cleanup_covenant' ).onclick = async () => {
+                var network = cleanup_crew.network;
+                cleanup_crew.demoCleanupCovenant( network );
+            }
+        </script>
+    </body>
+</html>
