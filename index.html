@@ -3,29 +3,29 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, user-scalable=no">
-        <title>Cleanup Crew</title>
+        <title>SSB Playground</title>
         <script src="https://bundle.run/buffer@6.0.3"></script>
         <script>var Buffer = buffer.Buffer;</script>
         <script src="https://supertestnet.github.io/bitcoin-chess/js/bitcoinjs-lib.js"></script>
         <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
         <script>
-            var cleanup_crew = {
+            var ssb_playground = {
                 waiting: false,
                 network: "regtest",
                 in_progress: null,
                 waitSomeTime: num => new Promise( resolve => setTimeout( resolve, num ) ),
                 wait: async () => {
-                    cleanup_crew.waiting = true;
+                    ssb_playground.waiting = true;
                     var loop = async () => {
-                        if ( !cleanup_crew.waiting ) return;
-                        await cleanup_crew.waitSomeTime( 10 );
+                        if ( !ssb_playground.waiting ) return;
+                        await ssb_playground.waitSomeTime( 10 );
                         return await loop();
                     }
                     return await loop();
                 },
                 reverseHexString: s => s.match( /[a-fA-F0-9]{2}/g ).reverse().join( '' ),
                 decodeCompactSize: compact_size => {
-                    var reverseHexString = cleanup_crew.reverseHexString;
+                    var reverseHexString = ssb_playground.reverseHexString;
                     var first_byte = compact_size.substring( 0, 2 ).toLowerCase();
                     var size = Number( BigInt( `0x${reverseHexString( compact_size.substring( 0, 2 ) )}` ) );
                     var actual_compact_size = compact_size.substring( 0, 2 );
@@ -47,7 +47,7 @@
                     return { size, first_byte, actual_compact_size }
                 },
                 parseTransactions: ( num_of_txs, txs ) => {
-                    var decodeCompactSize = cleanup_crew.decodeCompactSize;
+                    var decodeCompactSize = ssb_playground.decodeCompactSize;
                     var rest = txs;
                     var tx_objects = [];
                     var loop = rest => {
@@ -174,7 +174,7 @@
                     return tx_objects;
                 },
                 getLegacySighash: ( txhex, prev_tx, input_num, sigflag, redeem_script ) => {
-                    var parseTransactions = cleanup_crew.parseTransactions;
+                    var parseTransactions = ssb_playground.parseTransactions;
                     //Create a copy of the transaction (txCopy)
                     var original = parseTransactions( 1, txhex )[ 0 ];
                     var txcopy = parseTransactions( 1, txhex )[ 0 ];
@@ -208,7 +208,9 @@
                         txcopy.number_of_inputs = [ 1, "01" ];
                     }
                     //If the SIGHASH_NONE flag is set, apply the following additional modifications
+                    var sighash_none_is_set = false;
                     if ( sigflag === "02" || sigflag === "82" ) {
+                        sighash_none_is_set = true;
                         //--- Set the output vector to empty
                         var i; for ( i=0; i<txcopy.num_of_outputs[ 0 ]; i++ ) delete txcopy[ `output_${i}` ];
                         txcopy.num_of_outputs = [ 0, "00" ];
@@ -274,6 +276,7 @@
                     preimage += parsed_tx.num_of_outputs[ 1 ];
                     //For each output:
                     var i; for ( i=0; i<original.num_of_outputs[ 0 ]; i++ ) {
+                        if ( sighash_none_is_set ) continue;
                         if ( sighash_single_is_set && i > input_num ) continue;
                         //--- Append an 8 byte amount (little-endian)
                         preimage += parsed_tx[ `output_${i}` ].value;
@@ -301,8 +304,8 @@
                 prepareRestriction: ( network, extra_pubkey, use_gtx ) => {
                     //for an ftx restriction we expect the stack to contain one element, namely, the signature 300602010102010183, which we duplicate, hash, and compare its hash to 32a8efa32f198f21b58d98919a25b0cbcb428d49; if this commitment is satisfied, we know the user provided the right signature, because that's the hash of the above-mentioned signature. However, the original signature was consumed by the hash function, so to check the signature's validity, we check its duplicate that we made in the first step, and check it against a pubkey which we know that signature validates for if and only if the sighash is 0x0100...0000 -- meaning there is no output at this index. The required pubkey (0378...83df) was generated using public key recovery to find out what public key that signature validates for when the message (i.e. the sighash) is 0x0100...0000.
                     var restriction_script = [ "OP_DUP", "OP_RIPEMD160", "32a8efa32f198f21b58d98919a25b0cbcb428d49", "OP_EQUALVERIFY", "03784b6ebe47edcb0b81092d016c054a4375f9d0b73ca68afdf6c97614c83b83df", "OP_CHECKSIG" ];
-                    //for a gtx restriction we expect the stack to contain two elements: a public key generated by the user in a manner to be described shortly followed by the signature 300602010102010183. As before, we duplicate the signature and check it against a hash to ensure it is the one we expect. However, we cannot simply check the signature's validity and ensure it's false, because bitcoin's standard mempool policy rules do not allow invalid signatures to be anything but an empty string, and our signature is not that. So, instead, we check the signature against the public key supplied by the user. But currently it is at the back of the stack, with the duplicate of the signature in front of it, so we run OP_SWAP to put them in the right order. Next we duplicate the user's public key and push the duplicate to the altstack, for use later. Then we run OP_CHECKSIGVERIFY, forcing the signature to validate. How does the user get a public key that the signature validates for? The same way we did: by using public key recovery to find out what public key the signature validates for when the message is the sighash for this input. Having ascertained that the signature -- which uses sighash_single | acp -- is valid, we now know one of two things is true: either there is an output at this index -- which is what we want, per the terms of the gtx restriction -- or the sighash for this input is 0x0100...0000. To eliminate the second possiblity, we bring back the duplicate of the user's pubkey from the altstack, compare it with the public key we know represents the sighash 0x0100...0000, and ensure they are not the same (using OP_EQUAL OP_NOT). If they ARE the same, then the user's public key was the one representing the sighash 0x0100...0000, meaning there was no output at this index. That is not what we want, BUT, since their public key matched the one we compared it to, the only item left on the stack is OP_FALSE, so the script is invalid. If, by contrast, the public keys are NOT the same, then the user's public key was NOT the one representing the sighash 0x0100...0000, meaning there IS an output at this index. That is what we want, and since their public key did NOT match the one we compared it to, the only item left on the stack is OP_TRUE, so the script is valid.
-                    if ( use_gtx ) restriction_script = [ "OP_DUP", "OP_RIPEMD160", "32a8efa32f198f21b58d98919a25b0cbcb428d49", "OP_EQUALVERIFY", "OP_SWAP", "OP_DUP", "OP_TOALTSTACK", "OP_CHECKSIGVERIFY", "OP_FROMALTSTACK", "03784b6ebe47edcb0b81092d016c054a4375f9d0b73ca68afdf6c97614c83b83df", "OP_EQUAL", "OP_NOT" ];
+                    //for a gtx restriction we expect the stack to contain two elements: a public key generated by the user in a manner to be described shortly followed by the signature 300602010102010183. As before, we duplicate the signature and check it against a hash to ensure it is the one we expect. However, we cannot simply check the signature's validity and ensure it's false, because bitcoin's standard mempool policy rules do not allow invalid signatures to be anything but an empty string, and our signature is not that. So, instead, we check the signature against the public key supplied by the user. But currently it is at the back of the stack, with the duplicate of the signature in front of it, so we run OP_SWAP to put them in the right order. Next we ensure the user's public key is 33 bytes. Next we duplicate the user's public key and push the duplicate to the altstack, for use later. Then we run OP_CHECKSIGVERIFY, forcing the signature to validate. How does the user get a public key that the signature validates for? The same way we did: by using public key recovery to find out what public key the signature validates for when the message is the sighash for this input. Having ascertained that the signature -- which uses sighash_single | acp -- is valid, we now know one of two things is true: either there is an output at this index -- which is what we want, per the terms of the gtx restriction -- or the sighash for this input is 0x0100...0000. To eliminate the second possiblity, we bring back the duplicate of the user's pubkey from the altstack, compare it with the public key we know represents the sighash 0x0100...0000, and ensure they are not the same (using OP_EQUAL OP_NOT). If they ARE the same, then the user's public key was the one representing the sighash 0x0100...0000, meaning there was no output at this index. That is not what we want, BUT, since their public key matched the one we compared it to, the only item left on the stack is OP_FALSE, so the script is invalid. If, by contrast, the public keys are NOT the same, then the user's public key was NOT the one representing the sighash 0x0100...0000, meaning there IS an output at this index. That is what we want, and since their public key did NOT match the one we compared it to, the only item left on the stack is OP_TRUE, so the script is valid.
+                    if ( use_gtx ) restriction_script = [ "OP_DUP", "OP_RIPEMD160", "32a8efa32f198f21b58d98919a25b0cbcb428d49", "OP_EQUALVERIFY", "OP_SWAP", "OP_SIZE", "21", "OP_EQUALVERIFY", "OP_DUP", "OP_TOALTSTACK", "OP_CHECKSIGVERIFY", "OP_FROMALTSTACK", "03784b6ebe47edcb0b81092d016c054a4375f9d0b73ca68afdf6c97614c83b83df", "OP_EQUAL", "OP_NOT" ];
                     if ( extra_pubkey ) restriction_script.unshift( extra_pubkey, "OP_CHECKSIGVERIFY" );
                     var script = bitcoinjs.script.fromASM( restriction_script.join( " " ) );
                     var scripthash = bitcoinjs.crypto.hash160( script ).toHex();
@@ -333,7 +336,7 @@
                     return psbt.data.globalMap.unsignedTx.toBuffer().toString( "hex" );
                 },
                 demoFTXRestriction: async network => {
-                    cleanup_crew.in_progress = "ftx";
+                    ssb_playground.in_progress = "ftx";
                     //Display initial instructions
                     $( '.instructions' ).innerHTML = `
                         <p>In this demo, we will create a basic restriction called an FTX restriction, which stands for "Fewer Than X."</p>
@@ -344,12 +347,12 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "ftx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "ftx" ) return;
 
-                    //Prepare ftx restriction
-                    var [ restriction_address, restriction_script ] = cleanup_crew.prepareRestriction( network );
+                    //Prepare an ftx restriction
+                    var [ restriction_address, restriction_script ] = ssb_playground.prepareRestriction( network );
                     var restriction_scriptsig = "09300602010102010183";
                     var final_redeem_script = bitcoinjs.script.fromASM( restriction_script.join( " " ) ).toHex();
                     var final_scriptsig = restriction_scriptsig + bitcoinjs.script.fromASM( final_redeem_script ).toHex();
@@ -365,9 +368,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "ftx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "ftx" ) return;
 
                     //Get the funding transaction data
                     var restriction_funding_txhex = prompt( `enter the hex of the funding transaction` );
@@ -394,7 +397,7 @@
                         address: destino,
                         value: restriction_txinfo.amnt - 500,
                     }];
-                    var invalid_txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var invalid_txhex = ssb_playground.prepareTx( network, inputs, outputs );
                     var invalid_tx = bitcoinjs.Transaction.fromHex( invalid_txhex );
 
                     //Add the restriction's scriptsig
@@ -411,12 +414,12 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "ftx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "ftx" ) return;
 
                     //Create a legacy address
-                    var [ address, keypair ] = cleanup_crew.getLegacyAddress( network );
+                    var [ address, keypair ] = ssb_playground.getLegacyAddress( network );
                     var pubkey = keypair.publicKey.toString( "hex" );
 
                     //Display instructions
@@ -429,9 +432,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "ftx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "ftx" ) return;
 
                     //Get the funding transaction data
                     var normal_funding_txhex = prompt( `enter the hex of the second funding transaction (i.e. the one you just created` );
@@ -470,14 +473,14 @@
                         address: destino,
                         value: amnt0 + amnt1 - 500,
                     }];
-                    var txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var txhex = ssb_playground.prepareTx( network, inputs, outputs );
                     var tx = bitcoinjs.Transaction.fromHex( txhex );
 
                     //Sign the first input
                     var prev_tx = thex0;
                     var input_num = 0;
                     var sigflag = "01";
-                    var sighash0 = cleanup_crew.getLegacySighash( txhex, prev_tx, input_num, sigflag );
+                    var sighash0 = ssb_playground.getLegacySighash( txhex, prev_tx, input_num, sigflag );
                     var sig0 = keypair.sign( Buffer.from( sighash0, "hex" ), true );
                     var sigflag0 = 1;
                     sig0 = bitcoinjs.script.signature.encode( sig0, sigflag0 ).toString( "hex" );
@@ -497,10 +500,10 @@
                         <p>Voila! You created a bitcoin address that enforced a basic FTX restriction on bitcoin</p>
                     `;
                     window.scrollTo( 0, 0 );
-                    cleanup_crew.in_progress = null;
+                    ssb_playground.in_progress = null;
                 },
                 demoGTXRestriction: async network => {
-                    cleanup_crew.in_progress = "gtx";
+                    ssb_playground.in_progress = "gtx";
                     //Display initial instructions
                     $( '.instructions' ).innerHTML = `
                         <p>In this demo, we will create a restriction called a GTX restriction, which stands for "Greater Than X."</p>
@@ -511,14 +514,14 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "gtx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "gtx" ) return;
 
                     //Prepare gtx restriction
                     var extra_pubkey = null;
                     var use_gtx = true;
-                    var [ restriction_address, restriction_script ] = cleanup_crew.prepareRestriction( network, extra_pubkey, use_gtx );
+                    var [ restriction_address, restriction_script ] = ssb_playground.prepareRestriction( network, extra_pubkey, use_gtx );
 
                     //Display the restriction address
                     $( '.instructions' ).innerHTML = `
@@ -531,9 +534,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "gtx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "gtx" ) return;
 
                     //Get the funding transaction data
                     var restriction_funding_txhex = prompt( `enter the hex of the funding transaction` );
@@ -552,7 +555,7 @@
                     var destino = prompt( `Enter an address where you want the restriction-encumbered sats to go\n\nIf you don't have one handy, a test address has been provided`, 'n3qUi7LfcVyXaZQULJxnVFAsmpWKedpC65' );
 
                     //Create a legacy address
-                    var [ address, keypair ] = cleanup_crew.getLegacyAddress( network );
+                    var [ address, keypair ] = ssb_playground.getLegacyAddress( network );
                     var pubkey = keypair.publicKey.toString( "hex" );
 
                     //Display the normal address
@@ -567,9 +570,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "gtx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "gtx" ) return;
 
                     //Get the funding transaction data
                     var normal_funding_txhex = prompt( `enter the hex of the second funding transaction (i.e. the one you just created` );
@@ -599,19 +602,19 @@
                         script: bitcoinjs.script.fromASM( 'OP_RETURN' ),
                         value: 0,
                     }];
-                    var txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var txhex = ssb_playground.prepareTx( network, inputs, outputs );
                     var tx = bitcoinjs.Transaction.fromHex( txhex );
 
                     //Prepare an invalid transaction
                     outputs.pop();
-                    var invalid_txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var invalid_txhex = ssb_playground.prepareTx( network, inputs, outputs );
                     var invalid_tx = bitcoinjs.Transaction.fromHex( invalid_txhex );
 
                     //Sign the first input of the invalid tx
                     var prev_tx = normal_funding_txhex;
                     var input_num = 0;
                     var sigflag = "83";
-                    var sighash0 = cleanup_crew.getLegacySighash( invalid_txhex, prev_tx, input_num, sigflag );
+                    var sighash0 = ssb_playground.getLegacySighash( invalid_txhex, prev_tx, input_num, sigflag );
                     var sig0 = keypair.sign( Buffer.from( sighash0, "hex" ), true );
                     var sigflag0 = 3 | 128;
                     sig0 = bitcoinjs.script.signature.encode( sig0, sigflag0 ).toString( "hex" );
@@ -624,7 +627,7 @@
                     var prev_tx = restriction_funding_txhex;
                     var input_num = 1;
                     var final_redeem_script = bitcoinjs.script.fromASM( restriction_script.join( " " ) ).toHex();
-                    var sighash1 = cleanup_crew.getLegacySighash( invalid_txhex, prev_tx, input_num, sigflag, final_redeem_script );
+                    var sighash1 = ssb_playground.getLegacySighash( invalid_txhex, prev_tx, input_num, sigflag, final_redeem_script );
                     var recovered_pubkey = nobleSecp256k1.recoverPublicKey( sighash1, "3006020101020101", 1 );
                     recovered_pubkey = nobleSecp256k1.Point.fromHex( recovered_pubkey ).toHex( true );
                     var restriction_scriptsig = `21${recovered_pubkey}09300602010102010183`;
@@ -642,9 +645,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "gtx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "gtx" ) return;
 
                     //Display information about the next step
                     $( '.instructions' ).innerHTML = `
@@ -656,15 +659,15 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "gtx" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "gtx" ) return;
 
                     //Sign the first input of the valid tx (its sighash is different from the invalid tx's sighash due to having an extra output -- this is true even though it uses sighash_single, because sighash_single commits to the total output *count* even though it only commits to one actual *output* -- so by adding an extra output, we changed what it commits to, and thus the sighash changed)
                     var prev_tx = normal_funding_txhex;
                     var input_num = 0;
                     var sigflag = "83";
-                    var sighash0 = cleanup_crew.getLegacySighash( txhex, prev_tx, input_num, sigflag );
+                    var sighash0 = ssb_playground.getLegacySighash( txhex, prev_tx, input_num, sigflag );
                     var sig0 = keypair.sign( Buffer.from( sighash0, "hex" ), true );
                     var sigflag0 = 3 | 128;
                     sig0 = bitcoinjs.script.signature.encode( sig0, sigflag0 ).toString( "hex" );
@@ -676,7 +679,7 @@
                     //Add the restriction's scriptsig to the invalid tx
                     var prev_tx = restriction_funding_txhex;
                     var input_num = 1;
-                    var sighash1 = cleanup_crew.getLegacySighash( txhex, prev_tx, input_num, sigflag, final_redeem_script );
+                    var sighash1 = ssb_playground.getLegacySighash( txhex, prev_tx, input_num, sigflag, final_redeem_script );
                     var recovered_pubkey = nobleSecp256k1.recoverPublicKey( sighash1, "3006020101020101", 1 );
                     recovered_pubkey = nobleSecp256k1.Point.fromHex( recovered_pubkey ).toHex( true );
                     var restriction_scriptsig = `21${recovered_pubkey}09300602010102010183`;
@@ -691,15 +694,360 @@
                         <p>Voila! You created a bitcoin address that enforced a GTX restriction on bitcoin</p>
                     `;
                     window.scrollTo( 0, 0 );
-                    cleanup_crew.in_progress = null;
+                    ssb_playground.in_progress = null;
+                },
+                demoETXRestriction: async network => {
+                    ssb_playground.in_progress = "etx";
+                    //Display initial instructions
+                    $( '.instructions' ).innerHTML = `
+                        <p>In this demo, we will create a restriction called an ETX restriction, which stands for "Equal To X."</p>
+                        <p>The restriction will consist of two bitcoin addresses, each with two limitations: the first limitation in each is, both must have a signature from a preset pubkey; the second limitation varies. In the first address, the second limitation will consist of a GTX restriction, and in the second, it will consist of an FTX restriction. After some further steps about to be explained -- including publishing some signatures -- you will make these addresses anyone_can_spend addresses, with the caveat that anyone who uses the signatures you publish will only be able to spend the money if they create a transaction with a specific number of outputs selected in advance by you.</p>
+                        <p>To make this work, the other steps I mentioned a moment ago are these: you have to select the number of outputs you want, which we define as the number N. Suppose for a moment that N equals 10. Then, you have to fund a number of utxos equal to N plus 1 (e.g. 11), such that the last two utxos you fund are the two utxos mentioned above -- the ones with the GTX restriction and the FTX restriction in them. Then, for each of the utxos you created, you will publish a sighash_none signature. These signatures will specify all the inputs, but not the outputs.</p>
+                        <p>Specifically, they will require a future spender to publish a transaction containing the utxos you generated as inputs, where the last one contains the FTX restriction and the second-to-last one contains the GTX restriction. Since the GTX restriction effectively says "there MUST be an output at this index (e.g. index 10)" and the FTX restriction effectively says "there must NOT be an output at THIS index (e.g. index 11)," the only way to satisfy both restrictions is by creating exactly N outputs -- e.g. exactly 10 outputs. Which means an FTX restriction and a GTX restriction *together* create an ETX restriction.</p>
+                        <p>Click ok when you are ready.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "etx" ) return;
+
+                    var num_of_utxos = Number( prompt( `enter the number of outputs you want the ETX restriction to require`, 10 ) );
+                    if ( !num_of_utxos ) return;
+
+                    //Create a legacy address for funding the number of outputs picked by the user, plus one
+                    var [ many_output_maker, many_keypair ] = ssb_playground.getLegacyAddress( network );
+                    var many_pubkey = many_keypair.publicKey.toString( "hex" );
+
+                    //Display instructions about creating 99 utxos
+                    $( '.instructions' ).innerHTML = `
+                        <p>To create a restriction that requires a future spender to create ${num_of_utxos.toLocaleString()} outputs, you have to create ${( num_of_utxos + 1 ).toLocaleString()} inputs. Fund the address below with ${( ( ( num_of_utxos + 1 ) * 540 ) + ( ( num_of_utxos + 1 ) * 47 ) ).toLocaleString()} sats on ${network}. That is ${( num_of_utxos + 1 ).toLocaleString()} * 540 + ${( ( num_of_utxos + 1 ) * 47 ).toLocaleString()}. Each of the utxos you create will be funded with 540 sats, which is the dust limit for the types of addresses we're going to create. The extra ${( ( num_of_utxos + 1 ) * 47 ).toLocaleString()} will pay for mining fees.</p>
+                        <p>${many_output_maker}</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "etx" ) return;
+
+                    //Get the funding transaction data
+                    var many_funding_txhex = prompt( `enter the hex of the funding transaction` );
+                    var tx = bitcoinjs.Transaction.fromHex( many_funding_txhex );
+                    var many_txinfo = {
+                        txid: tx.getId(),
+                    }
+                    tx.outs.forEach( ( output, index ) => {
+                        var calculated_address = bitcoinjs.address.fromOutputScript( output.script, bitcoinjs.networks[ network ] );
+                        if ( calculated_address !== many_output_maker ) return;
+                        many_txinfo.vout = index;
+                        many_txinfo.amnt = output.value;
+                    });
+
+                    //Prepare an anyone_can_spend address
+                    var acs_script = bitcoinjs.script.fromASM( 'OP_TRUE' );
+                    var acs_scripthash = bitcoinjs.crypto.hash160( acs_script ).toHex();
+                    var acs_address = bitcoinjs.address.fromOutputScript( Buffer.from( "a914" + acs_scripthash + "87", "hex" ), bitcoinjs.networks[ network ] );
+                    var acs_scriptsig = "0151";
+
+                    //Prepare inputs and outputs for a tx that creates many outputs
+                    var inputs = [{
+                        txid: many_txinfo.txid,
+                        vout: many_txinfo.vout,
+                    }];
+                    var outputs = [];
+                    var i; for ( i=0; i<num_of_utxos - 1; i++ ) outputs.push({
+                        address: acs_address,
+                        value: 540,
+                    });
+
+                    //Prepare an extra keypair for use in the restrictions
+                    var extra_privkey = bitcoinjs.ECPair.makeRandom().__D;
+                    var extra_keypair = bitcoinjs.ECPair.fromPrivateKey( extra_privkey );
+                    var extra_pubkey = extra_keypair.publicKey.toString( "hex" );
+
+                    //Prepare an ftx restriction and a gtx restriction
+                    var [ ftx_restriction_address, ftx_restriction_script ] = ssb_playground.prepareRestriction( network, extra_pubkey );
+                    var use_gtx = true;
+                    var [ gtx_restriction_address, gtx_restriction_script ] = ssb_playground.prepareRestriction( network, extra_pubkey, use_gtx );
+
+                    //Add the restriction addresses as extra outputs
+                    outputs.push({
+                        address: gtx_restriction_address,
+                        value: 540,
+                    },{
+                        address: ftx_restriction_address,
+                        value: 540,
+                    });
+
+                    //Generate a tx that creates many outputs
+                    var many_txhex = ssb_playground.prepareTx( network, inputs, outputs );
+                    var many_tx = bitcoinjs.Transaction.fromHex( many_txhex );
+
+                    //Sign the first input
+                    var prev_tx = many_funding_txhex;
+                    var input_num = 0;
+                    var sigflag = "01";
+                    var many_sighash = ssb_playground.getLegacySighash( many_txhex, prev_tx, input_num, sigflag );
+                    var many_sig = many_keypair.sign( Buffer.from( many_sighash, "hex" ), true );
+                    var many_sigflag = 1;
+                    many_sig = bitcoinjs.script.signature.encode( many_sig, many_sigflag ).toString( "hex" );
+
+                    //Add the first input's scriptsig
+                    var many_scriptsig = ( many_sig.length / 2 ).toString( 16 ) + many_sig + "21" + many_pubkey;
+                    many_tx.ins[ 0 ].script = Buffer.from( many_scriptsig, "hex" );
+
+                    //Get the txid for use later
+                    var many_txid = many_tx.getId();
+
+                    //Display the now-signed transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Broadcast this transaction:</p>
+                        <p>${many_tx.toHex()}</p>
+                        <p>Now there are ${( num_of_utxos + 1 ).toLocaleString()} outputs for us to consume later -- including 2 in the restriction addresses required to make an etx restriction. Our next step is to create a transaction that tries to spend the restriction-encumbered sats, but it will only create ${( num_of_utxos - 1 ).toLocaleString()} total utxos, not the ${( num_of_utxos ).toLocaleString()} required by the restriction. This transaction will be invalid, but we will try it anyway, just to see it fail, i.e. just to see the script enforce the restriction.</p>
+                        <p>Click ok to continue.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "etx" ) return;
+
+                    //Get a destination address
+                    var destino = prompt( `Enter an address where you want the restriction-encumbered sats to go\n\nIf you don't have one handy, a test address has been provided`, 'n3qUi7LfcVyXaZQULJxnVFAsmpWKedpC65' );
+
+                    //Prepare a valid transaction
+                    var inputs = [];
+                    var i; for ( i=0; i<num_of_utxos + 1; i++ ) inputs.push({
+                        txid: many_txid,
+                        vout: i,
+                    });
+                    var outputs = [{
+                        address: destino,
+                        value: 546,
+                    }];
+                    var i; for ( i=1; i<num_of_utxos; i++ ) outputs.push({
+                        script: bitcoinjs.script.fromASM( 'OP_RETURN' ),
+                        value: 0,
+                    });
+                    var txhex = ssb_playground.prepareTx( network, inputs, outputs );
+                    var tx = bitcoinjs.Transaction.fromHex( txhex );
+
+                    //Prepare an invalid transaction
+                    outputs.pop();
+                    var invalid_txhex = ssb_playground.prepareTx( network, inputs, outputs );
+                    var invalid_tx = bitcoinjs.Transaction.fromHex( invalid_txhex );
+
+                    //Prepare a second invalid transaction
+                    outputs.push({
+                        script: bitcoinjs.script.fromASM( 'OP_RETURN' ),
+                        value: 0,
+                    },{
+                        script: bitcoinjs.script.fromASM( 'OP_RETURN' ),
+                        value: 0,
+                    });
+                    var second_invalid_txhex = ssb_playground.prepareTx( network, inputs, outputs );
+                    var second_invalid_tx = bitcoinjs.Transaction.fromHex( second_invalid_txhex );
+
+                    //Add a scriptsig for every acs input
+                    var i; for ( i=0; i<num_of_utxos - 1; i++ ) invalid_tx.ins[ i ].script = Buffer.from( acs_scriptsig, "hex" );
+                    var i; for ( i=0; i<num_of_utxos - 1; i++ ) second_invalid_tx.ins[ i ].script = Buffer.from( acs_scriptsig, "hex" );
+                    var i; for ( i=0; i<num_of_utxos - 1; i++ ) tx.ins[ i ].script = Buffer.from( acs_scriptsig, "hex" );
+
+                    //Make the first invalid gtx restriction sig
+                    var prev_tx = many_txhex;
+                    var input_num = num_of_utxos - 1;
+                    var sigflag = "02";
+                    var final_gtx_redeem_script = bitcoinjs.script.fromASM( gtx_restriction_script.join( " " ) ).toHex();
+                    var sighash0 = ssb_playground.getLegacySighash( invalid_txhex, prev_tx, input_num, sigflag, final_gtx_redeem_script );
+                    var alt_sigflag = "83";
+                    var alt_sighash0 = ssb_playground.getLegacySighash( invalid_txhex, prev_tx, input_num, alt_sigflag, final_gtx_redeem_script );
+                    var gtx_restriction_sig = extra_keypair.sign( Buffer.from( sighash0, "hex" ), true );
+                    var gtx_sigflag = 2;
+                    gtx_restriction_sig = bitcoinjs.script.signature.encode( gtx_restriction_sig, gtx_sigflag ).toString( "hex" );
+                    var length_of_gtx_restriction_sig = gtx_restriction_sig.length / 2;
+                    var length_of_gtx_restriction_sig_in_hex = length_of_gtx_restriction_sig.toString( 16 );
+
+                    //Add the gtx restriction's scriptsig to the first invalid tx
+                    var recovered_pubkey = nobleSecp256k1.recoverPublicKey( alt_sighash0, "3006020101020101", 1 );
+                    recovered_pubkey = nobleSecp256k1.Point.fromHex( recovered_pubkey ).toHex( true );
+                    var gtx_restriction_scriptsig = `21${recovered_pubkey}09300602010102010183${length_of_gtx_restriction_sig_in_hex}${gtx_restriction_sig}`;
+                    var final_gtx_scriptsig = gtx_restriction_scriptsig + bitcoinjs.script.fromASM( final_gtx_redeem_script ).toHex();
+                    var invalid_gtx_scriptsig = final_gtx_scriptsig;
+                    invalid_tx.ins[ num_of_utxos - 1 ].script = Buffer.from( invalid_gtx_scriptsig, "hex" );
+
+                    //Make the first invalid ftx restriction sig
+                    var prev_tx = many_txhex;
+                    var input_num = num_of_utxos;
+                    var sigflag = "02";
+                    var final_ftx_redeem_script = bitcoinjs.script.fromASM( ftx_restriction_script.join( " " ) ).toHex();
+                    var sighash1 = ssb_playground.getLegacySighash( invalid_txhex, prev_tx, input_num, sigflag, final_ftx_redeem_script );
+                    var ftx_restriction_sig = extra_keypair.sign( Buffer.from( sighash1, "hex" ), true );
+                    var ftx_sigflag = 2;
+                    ftx_restriction_sig = bitcoinjs.script.signature.encode( ftx_restriction_sig, ftx_sigflag ).toString( "hex" );
+                    var length_of_ftx_restriction_sig = ftx_restriction_sig.length / 2;
+                    var length_of_ftx_restriction_sig_in_hex = length_of_ftx_restriction_sig.toString( 16 );
+
+                    //Add the ftx restriction's scriptsig to the first invalid tx
+                    var ftx_restriction_scriptsig = "09300602010102010183";
+                    var invalid_ftx_scriptsig = ftx_restriction_scriptsig + length_of_ftx_restriction_sig_in_hex + ftx_restriction_sig + bitcoinjs.script.fromASM( final_ftx_redeem_script ).toHex();
+                    invalid_tx.ins[ num_of_utxos ].script = Buffer.from( invalid_ftx_scriptsig, "hex" );
+
+                    //Display the now-signed invalid transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Try (and fail) to broadcast this transaction, which has ${num_of_utxos + 1} inputs and ${num_of_utxos - 1} outputs. It *would* be valid if not for the GTX restriction, which, due to its current position, requires an output count *greater than* ${num_of_utxos - 1} -- and since our transaction has *exactly* ${num_of_utxos - 1} outputs, it is not enough.</p>
+                        <p>${invalid_tx.toHex()}</p>
+                        <p>Broadcast the transaction on ${network} and click ok when it inevitably fails with an error.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "etx" ) return;
+
+                    //Display information about the next step
+                    $( '.instructions' ).innerHTML = `
+                        <p>Now we will create another invalid transaction, this time attempting to create *more than* 10 outputs</p>
+                        <p>The only thing we will do is slightly modify our previous transaction: we will add two extra outputs, both op_returns with 0 value. That will satisfy the original gtx restriction, but will break the ftx restriction, so the transaction will still be invalid.</p>
+                        <p>Click ok to continue.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "etx" ) return;
+
+                    //Make the second invalid gtx restriction sig
+                    var prev_tx = many_txhex;
+                    var input_num = num_of_utxos - 1;
+                    var sigflag = "02";
+                    var final_gtx_redeem_script = bitcoinjs.script.fromASM( gtx_restriction_script.join( " " ) ).toHex();
+                    var sighash0 = ssb_playground.getLegacySighash( second_invalid_txhex, prev_tx, input_num, sigflag, final_gtx_redeem_script );
+                    var alt_sigflag = "83";
+                    var alt_sighash0 = ssb_playground.getLegacySighash( second_invalid_txhex, prev_tx, input_num, alt_sigflag, final_gtx_redeem_script );
+                    var gtx_restriction_sig = extra_keypair.sign( Buffer.from( sighash0, "hex" ), true );
+                    var gtx_sigflag = 2;
+                    gtx_restriction_sig = bitcoinjs.script.signature.encode( gtx_restriction_sig, gtx_sigflag ).toString( "hex" );
+                    var length_of_gtx_restriction_sig = gtx_restriction_sig.length / 2;
+                    var length_of_gtx_restriction_sig_in_hex = length_of_gtx_restriction_sig.toString( 16 );
+
+                    //Add the gtx restriction's scriptsig to the second invalid tx
+                    var recovered_pubkey = nobleSecp256k1.recoverPublicKey( alt_sighash0, "3006020101020101", 1 );
+                    recovered_pubkey = nobleSecp256k1.Point.fromHex( recovered_pubkey ).toHex( true );
+                    var gtx_restriction_scriptsig = `21${recovered_pubkey}09300602010102010183${length_of_gtx_restriction_sig_in_hex}${gtx_restriction_sig}`;
+                    var final_gtx_scriptsig = gtx_restriction_scriptsig + bitcoinjs.script.fromASM( final_gtx_redeem_script ).toHex();
+                    var invalid_gtx_scriptsig = final_gtx_scriptsig;
+                    second_invalid_tx.ins[ num_of_utxos - 1 ].script = Buffer.from( invalid_gtx_scriptsig, "hex" );
+
+                    //Make the second invalid ftx restriction sig
+                    var prev_tx = many_txhex;
+                    var input_num = num_of_utxos;
+                    var sigflag = "02";
+                    var final_ftx_redeem_script = bitcoinjs.script.fromASM( ftx_restriction_script.join( " " ) ).toHex();
+                    var sighash1 = ssb_playground.getLegacySighash( second_invalid_txhex, prev_tx, input_num, sigflag, final_ftx_redeem_script );
+                    var ftx_restriction_sig = extra_keypair.sign( Buffer.from( sighash1, "hex" ), true );
+                    var ftx_sigflag = 2;
+                    ftx_restriction_sig = bitcoinjs.script.signature.encode( ftx_restriction_sig, ftx_sigflag ).toString( "hex" );
+                    var length_of_ftx_restriction_sig = ftx_restriction_sig.length / 2;
+                    var length_of_ftx_restriction_sig_in_hex = length_of_ftx_restriction_sig.toString( 16 );
+
+                    //Add the ftx restriction's scriptsig to the second invalid tx
+                    var ftx_restriction_scriptsig = "09300602010102010183";
+                    var invalid_ftx_scriptsig = ftx_restriction_scriptsig + length_of_ftx_restriction_sig_in_hex + ftx_restriction_sig + bitcoinjs.script.fromASM( final_ftx_redeem_script ).toHex();
+                    second_invalid_tx.ins[ num_of_utxos ].script = Buffer.from( invalid_ftx_scriptsig, "hex" );
+
+                    //Display the second invalid transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Try (and fail) to broadcast this transaction, which has ${num_of_utxos + 1} inputs and ${num_of_utxos + 1} outputs. It *would* be valid if not for the FTX restriction, which, due to its current position, requires an output count *less than* ${num_of_utxos + 1} -- and since our transaction has *exactly* ${num_of_utxos + 1} outputs, it is too many.</p>
+                        <p>${second_invalid_tx.toHex()}</p>
+                        <p>Broadcast the transaction on ${network} and click ok when it inevitably fails with an error.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "etx" ) return;
+
+                    //Display information about the next step
+                    $( '.instructions' ).innerHTML = `
+                        <p>Now we will create a valid transaction</p>
+                        <p>The only thing we will do is slightly modify our previous transaction: we will remove one of the extra outputs we created in the previous step, thus bringing our output count down to ${num_of_utxos}. That will satisfy the etx restriction by making the number of outputs exactly equal to the output count desired.</p>
+                        <p>Click ok to continue.</p>
+                        <p><button class="continue">ok</button></p>
+                    `;
+                    window.scrollTo( 0, 0 );
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "etx" ) return;
+
+                    //Make the valid gtx restriction sig
+                    var prev_tx = many_txhex;
+                    var input_num = num_of_utxos - 1;
+                    var sigflag = "02";
+                    var final_gtx_redeem_script = bitcoinjs.script.fromASM( gtx_restriction_script.join( " " ) ).toHex();
+                    var sighash0 = ssb_playground.getLegacySighash( txhex, prev_tx, input_num, sigflag, final_gtx_redeem_script );
+                    var alt_sigflag = "83";
+                    var alt_sighash0 = ssb_playground.getLegacySighash( txhex, prev_tx, input_num, alt_sigflag, final_gtx_redeem_script );
+                    var gtx_restriction_sig = extra_keypair.sign( Buffer.from( sighash0, "hex" ), true );
+                    var gtx_sigflag = 2;
+                    gtx_restriction_sig = bitcoinjs.script.signature.encode( gtx_restriction_sig, gtx_sigflag ).toString( "hex" );
+                    var length_of_gtx_restriction_sig = gtx_restriction_sig.length / 2;
+                    var length_of_gtx_restriction_sig_in_hex = length_of_gtx_restriction_sig.toString( 16 );
+
+                    //Add the gtx restriction's scriptsig to the invalid tx
+                    var recovered_pubkey = nobleSecp256k1.recoverPublicKey( alt_sighash0, "3006020101020101", 1 );
+                    recovered_pubkey = nobleSecp256k1.Point.fromHex( recovered_pubkey ).toHex( true );
+                    var gtx_restriction_scriptsig = `21${recovered_pubkey}09300602010102010183${length_of_gtx_restriction_sig_in_hex}${gtx_restriction_sig}`;
+                    var final_gtx_scriptsig = gtx_restriction_scriptsig + bitcoinjs.script.fromASM( final_gtx_redeem_script ).toHex();
+                    var valid_gtx_scriptsig = final_gtx_scriptsig;
+                    tx.ins[ num_of_utxos - 1 ].script = Buffer.from( valid_gtx_scriptsig, "hex" );
+
+                    //Make the valid ftx restriction sig
+                    var prev_tx = many_txhex;
+                    var input_num = num_of_utxos;
+                    var sigflag = "02";
+                    var final_ftx_redeem_script = bitcoinjs.script.fromASM( ftx_restriction_script.join( " " ) ).toHex();
+                    var sighash1 = ssb_playground.getLegacySighash( txhex, prev_tx, input_num, sigflag, final_ftx_redeem_script );
+                    var ftx_restriction_sig = extra_keypair.sign( Buffer.from( sighash1, "hex" ), true );
+                    var ftx_sigflag = 2;
+                    ftx_restriction_sig = bitcoinjs.script.signature.encode( ftx_restriction_sig, ftx_sigflag ).toString( "hex" );
+                    var length_of_ftx_restriction_sig = ftx_restriction_sig.length / 2;
+                    var length_of_ftx_restriction_sig_in_hex = length_of_ftx_restriction_sig.toString( 16 );
+
+                    //Add the ftx restriction's scriptsig to the invalid tx
+                    var ftx_restriction_scriptsig = "09300602010102010183";
+                    var valid_ftx_scriptsig = ftx_restriction_scriptsig + length_of_ftx_restriction_sig_in_hex + ftx_restriction_sig + bitcoinjs.script.fromASM( final_ftx_redeem_script ).toHex();
+                    tx.ins[ num_of_utxos ].script = Buffer.from( valid_ftx_scriptsig, "hex" );
+
+                    //Display the now-signed transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Broadcast this transaction, which has *exactly* ${num_of_utxos} ouputs:</p>
+                        <p>${tx.toHex()}</p>
+                        <p>Voila! You created a bitcoin address that enforced an ETX restriction on bitcoin</p>
+                    `;
+                    window.scrollTo( 0, 0 );
+                    ssb_playground.in_progress = null;
                 },
                 demoCleanupRestriction: async network => {
-                    cleanup_crew.in_progress = "cleanup";
+                    ssb_playground.in_progress = "cleanup";
                     //Display initial instructions
                     $( '.instructions' ).innerHTML = `
                         <p>In this demo, we will create an advanced restriction called a cleanup restriction, designed to automatically pay people who consume many outputs from the utxo set.</p>
                         <p>The restriction will consist of a bitcoin address with two limitations: in any transaction that tries to spend money locked to this address, the number of outputs must be smaller than the number of inputs, and it must have a signature from an extra pubkey too.</p>
-                        <p>Then we will publish an anyone_can_pay signature for that extra pubkey that specifies all the outputs, but not the inputs. Specifically, it will require 98 unspendable op_return outputs and 1 spendable "bounty address" that is truly anyone_can_spend. We expect someone to come along and take the bounty for himself or herself.</p>
+                        <p>Then we will publish an anyone_can_pay signature for that extra pubkey that specifies all the outputs, but not the inputs. Specifically, it will require 98 unspendable op_return outputs and 1 spendable "bounty address" that is also an anyone_can_spend address. We expect someone to come along and take the bounty for himself or herself.</p>
                         <p>Once we fund the restriction and publish the signature, anyone can take the money from the restriction and use it to fund (and then sweep) the bounty address, but only if their transaction consumes 100+ inputs from the utxo set and creates 1 spendable output (which is the bounty itself).</p>
                         <p>Click ok when you are ready.</p>
                         <p><button class="continue">ok</button></p>
@@ -707,15 +1055,15 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "cleanup" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "cleanup" ) return;
 
-                    //Prepare the restriction
+                    //Prepare a cleanup restriction
                     var extra_privkey = bitcoinjs.ECPair.makeRandom().__D;
                     var extra_keypair = bitcoinjs.ECPair.fromPrivateKey( extra_privkey );
                     var extra_pubkey = extra_keypair.publicKey.toString( "hex" );
-                    var [ restriction_address, restriction_script ] = cleanup_crew.prepareRestriction( network, extra_pubkey );
+                    var [ restriction_address, restriction_script ] = ssb_playground.prepareRestriction( network, extra_pubkey );
                     var restriction_scriptsig = "09300602010102010183";
                     var final_redeem_script = bitcoinjs.script.fromASM( restriction_script.join( " " ) ).toHex();
 
@@ -732,9 +1080,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "cleanup" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "cleanup" ) return;
 
                     //Get the funding transaction data
                     var restriction_funding_txhex = prompt( `enter the hex of the funding transaction` );
@@ -768,14 +1116,14 @@
                         script: bitcoinjs.script.fromASM( 'OP_RETURN' ),
                         value: 0,
                     });
-                    var acp_txhex = cleanup_crew.prepareTx( network, inputs, required_outputs );
+                    var acp_txhex = ssb_playground.prepareTx( network, inputs, required_outputs );
 
                     //Make the ACP sig
                     var prev_tx = restriction_funding_txhex;
                     var input_num = 0;
                     var sigflag = "81";
                     var redeem_script = final_redeem_script;
-                    var acp_sighash = cleanup_crew.getLegacySighash( acp_txhex, prev_tx, input_num, sigflag, redeem_script );
+                    var acp_sighash = ssb_playground.getLegacySighash( acp_txhex, prev_tx, input_num, sigflag, redeem_script );
                     var acp_sig = extra_keypair.sign( Buffer.from( acp_sighash, "hex" ), true );
                     var acp_sigflag = 1 | 128;
                     acp_sig = bitcoinjs.script.signature.encode( acp_sig, acp_sigflag ).toString( "hex" );
@@ -784,7 +1132,7 @@
                     if ( length_of_acp_sig_in_hex.length % 2 ) length_of_acp_sig_in_hex = "0" + length_of_acp_sig_in_hex;
 
                     //Create a legacy address for funding 99 outputs for user later
-                    var [ ninety_nine_output_maker, nn_keypair ] = cleanup_crew.getLegacyAddress( network );
+                    var [ ninety_nine_output_maker, nn_keypair ] = ssb_playground.getLegacyAddress( network );
                     var nn_pubkey = nn_keypair.publicKey.toString( "hex" );
 
                     //Display instructions about creating 99 utxos
@@ -797,9 +1145,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "cleanup" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "cleanup" ) return;
 
                     //Get the funding transaction data
                     var nn_funding_txhex = prompt( `enter the hex of the funding transaction` );
@@ -824,14 +1172,14 @@
                         address: acs_address,
                         value: 540,
                     });
-                    var nn_txhex = cleanup_crew.prepareTx( network, inputs, outputs );
+                    var nn_txhex = ssb_playground.prepareTx( network, inputs, outputs );
                     var nn_tx = bitcoinjs.Transaction.fromHex( nn_txhex );
 
                     //Sign the first input
                     var prev_tx = nn_funding_txhex;
                     var input_num = 0;
                     var sigflag = "01";
-                    var nn_sighash = cleanup_crew.getLegacySighash( nn_txhex, prev_tx, input_num, sigflag );
+                    var nn_sighash = ssb_playground.getLegacySighash( nn_txhex, prev_tx, input_num, sigflag );
                     var nn_sig = nn_keypair.sign( Buffer.from( nn_sighash, "hex" ), true );
                     var nn_sigflag = 1;
                     nn_sig = bitcoinjs.script.signature.encode( nn_sig, nn_sigflag ).toString( "hex" );
@@ -854,9 +1202,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "cleanup" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "cleanup" ) return;
 
                     //Get a destination address
                     var destino = prompt( `Enter an address where you want the restriction-encumbered sats to go\n\nIf you don't have one handy, a test address has been provided`, 'n3qUi7LfcVyXaZQULJxnVFAsmpWKedpC65' );
@@ -872,7 +1220,7 @@
                             vout: i,
                         });
                     }
-                    var invalid_txhex = cleanup_crew.prepareTx( network, inputs, required_outputs );
+                    var invalid_txhex = ssb_playground.prepareTx( network, inputs, required_outputs );
                     var invalid_tx = bitcoinjs.Transaction.fromHex( invalid_txhex );
 
                     //Add the restriction's scriptsig
@@ -892,9 +1240,9 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "cleanup" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "cleanup" ) return;
 
                     //Display instructions
                     $( '.instructions' ).innerHTML = `
@@ -905,16 +1253,16 @@
                     window.scrollTo( 0, 0 );
 
                     //Wait til user clicks ok
-                    $( '.continue' ).onclick = () => cleanup_crew.waiting = false;
-                    await cleanup_crew.wait();
-                    if ( cleanup_crew.in_progress !== "cleanup" ) return;
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "cleanup" ) return;
 
                     //Create unsigned restriction tx
                     inputs.unshift({
                         txid: nn_txid,
                         vout: 0,
                     });
-                    var txhex = cleanup_crew.prepareTx( network, inputs, required_outputs );
+                    var txhex = ssb_playground.prepareTx( network, inputs, required_outputs );
                     var tx = bitcoinjs.Transaction.fromHex( txhex );
 
                     //Add the restriction's scriptsig
@@ -929,9 +1277,40 @@
                         <p>Broadcast this transaction:</p>
                         <p>${tx.toHex()}</p>
                         <p>Voila! You created a bitcoin address that enforced a cleanup restriction -- an address that anyone can spend from with its anyone_can_pay signature, but only in a transaction that consumes 100+ inputs and creates only 1 spendable output.</p>
+                        <p>However, you aren't done yet. You created an anyone_can_spend output containing your bounty, and now it is time to sweep it into the address you picked earlier.</p>
+                        <p>Click ok to continue.</p>
+                        <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
-                    cleanup_crew.in_progress = null;
+
+                    //Wait til user clicks ok
+                    $( '.continue' ).onclick = () => ssb_playground.waiting = false;
+                    await ssb_playground.wait();
+                    if ( ssb_playground.in_progress !== "cleanup" ) return;
+
+                    //Create sweep tx
+                    var inputs = [{
+                        txid: tx.getId(),
+                        vout: 0,
+                    }];
+                    var outputs = [{
+                        address: destino,
+                        value: restriction_txinfo.amnt - 5_000 - 500,
+                    }];
+                    var sweep_txhex = ssb_playground.prepareTx( network, inputs, outputs );
+                    var sweep_tx = bitcoinjs.Transaction.fromHex( sweep_txhex );
+
+                    //Add the scriptsig to the sweep tx
+                    sweep_tx.ins[ 0 ].script = Buffer.from( acs_scriptsig, "hex" );
+
+                    //Display the sweep transaction
+                    $( '.instructions' ).innerHTML = `
+                        <p>Broadcast this transaction:</p>
+                        <p>${sweep_tx.toHex()}</p>
+                        <p>Note that since your earnings went into an anyone_can_spend output, which you are now sending to yourself, it would not be safe to broadcast this transaction into public mempools on mainnet. It might be safer to use a solution such as the private mempool of a trustworthy miner who promises not to take your earnings for himself. But even then, it's still not fully secure, because even if the miner is honest, their block could get overridden by some other miner's block, and then your earnings could be taken by *that* miner (or perhaps someone else). But that's the best I know how to do without introducing additional interactivity.</p>
+                    `;
+                    window.scrollTo( 0, 0 );
+                    ssb_playground.in_progress = null;
                 },
             }
         </script>
@@ -968,6 +1347,11 @@
             .hidden {
                 display: none !important;
             }
+            .details {
+                border: 1px solid black;
+                border-radius: 1rem;
+                padding: 1rem;
+            }
             .instructions_div {
                 background-color: #cccccc;
                 padding: 1rem;
@@ -998,8 +1382,49 @@
         </script>
     </head>
     <body>
-        <h1>Cleanup Crew</h1>
-        <p><button class="restriction_button ftx_restriction">FTX restriction</button> <button class="restriction_button gtx_restriction">GTX restriction</button> <button class="restriction_button cleanup_restriction">Cleanup restriction</button></p>
+        <h1>SSB Playground</h1>
+        <p>On this page, you can play with the bitcoin bug commonly called the Sighash Single Bug. I've created several different types of transactions which exploit it to do a basic form of transaction introspection, and you can try out each one to see what it does.</p>
+        <p><button class="learn_more">Learn more</button></p>
+        <div class="details hidden">
+            <p style="font-weight: bold;">Details</p>
+            <p>The Sighash Single Bug (SSB) is a bug in bitcoin's signature checking algorithm that affects certain legacy transactions, i.e. ones that don't use segwit. (In case you're wondering, "what about taproot?" taproot transactions are segwit transactions, so they are unaffected by this bug.)</p>
+            <p>The bug involves bitcoin's "sighash" function, which determines what message a user has to sign to create a valid signature for their transaction. All signatures in bitcoin are *supposed to* sign the hash -- or "sighash," as it is called -- of a truncated version of the transaction about to be broadcasted.</p>
+            <p>Typically, the truncated version includes a list of all the inputs to the transaction and all the outputs. However, wallets are *allowed* to modify what gets signed using things called "sighash flags." They have six options:</p>
+            <ol>
+                <li>All inputs and all outputs (sighash_all, which is the default)</li>
+                <li>All inputs and one output (sighash_single)</li>
+                <li>All inputs and zero outputs (sighash_none)</li>
+                <li>One input and all outputs (sighash_all | anyone_can_pay)</li>
+                <li>One input and one output (sighash_single | anyone_can_pay)</li>
+                <li>One input and zero outputs (sighash_none | anyone_can_pay)</li>
+            </ol>
+            <p>The Sighash Single Bug affects two of these sighash flags: sighash_single and sighash_single | anyone_can_pay. If a wallet uses either of those sighashes while signing a transaction, the wallet is *supposed to* sign one output. But which one? The answer is: the output to sign must be selected by running an algorithm that looks at the index of whatever *input* is being signed and finds a "matching output" at the same index.</p>
+            <p>So, for example, suppose you are sending "from" 3 bitcoin addresses and sending "to" 2 bitcoin addresses. The three "from" addresses are part of your transaction's "inputs," and you have to create a signature for each one. If you sign the "first" input with sighash_single, it will also sign one output: the first output. If you sign the "second" input with sighash_single, it will also sign one output: the second output.</p>
+            <p>The bug occurs if you sign the "third" input with sighash_single. It's *supposed to* sign a matching "third output," but there is none. The bug is, instead of causing the transaction to fail, a worse error happens: bitcoin expects your wallet to sign a sighash consisting of the number "01" followed by 62 zeroes. Here is the exact message ("sighash") it wants you to sign when this error happens:</p>
+            <p class="instructions_div"><span>0100000000000000000000000000000000000000000000000000000000000000</span></p>
+            <p>Weird, huh?</p>
+            <p>That strange bug causes several headaches. For example, if someone knows you have a bitcoin address containing a bunch of money, and they somehow convince you to sign that value with its private key, they can take your money. They have to manually create a bitcoin transaction that has your address in one of the inputs, e.g. in position 2, don't create an output in position 2, and add the signature they got from you in the signature field. Then they can use their own bitcoin addresses to fill any gaps in the input list, add one of their own bitcoin addresses as an output, and voila! Any money you had becomes theirs.</p>
+            <p>Wallet devs are therefore discouraged from letting users "accidentally" sign the above buggy sighash, as it can cause loss of funds. The segwit upgrade fixed this bug for all transactions that use segwit, but it's never been fixed for legacy transactions.</p>
+            <p>Recently, I realized that the bug can be exploited to do a basic form of transaction introspection. If you create a bitcoin script that "intentionally" exploits the sighash_single bug, it tells you information about the transaction that triggered it. A bitcoin script can require the user to pass in a signature that uses sighash_single and a pubkey, and check if the resulting signature is valid for the buggy sighash.</p>
+            <p>If the bug triggers, then the bitcoin script knows that the "input position" of the utxo being spent is greater than position 1, because position 1 (or position 0, if you prefer indexing from 0) *always* has a matching output -- it's a consensus rule in bitcoin that every transaction has to have at least 1 address in the outputs. So if the bug is exploited, it has to happen at an index position higher than that.</p>
+            <p>The same piece of information also tells the transaction that there is *at least* one more input than there are outputs. That is because the only way for the bug to trigger is if there is an input without a corresponding output -- so there must be more inputs than outputs.</p>
+            <p>I ended up coming up with a list of things your script can learn by checking if the exploit triggers, and here is that list:</p>
+            <ul>
+                <li>if the exploit triggers, then the "input position" of the utxo being spent is greater than position 1 (or 0, if you prefer indexing from 0)</li>
+                <li>if the exploit triggers, then the number of inputs is at least 2</li>
+                <li>if the exploit triggers, then the number of outputs is less than the number of inputs</li>
+                <li>if the exploit does NOT trigger, then there is an output at the current input position</li>
+            </ul>
+            <p>With that list in mind, I started playing with scripts that check if the bug triggers and either succeed or fail depending on the outcome, and figured out that I can create bitcoin addresses that use this information to place "restrictions" on the transactions that try to spend them -- like "this transaction must have more inputs than outputs" (an FTX restriction, also used in the Cleanup restriction) or "this transaction must have an output at index N" (a GTX restriction).</p>
+            <p>Then I figured out that I can combine an FTX restriction and a GTX restriction to create a *pair* of bitcoin addresses, fund them, make each one a multisig that requires *two* signatures, and publish a pair of signatures that commit to both. That way, they have to be spent together, or the published signatures are invalid.</p>
+            <p>The published signatures make both addresses "anyone_can_spend" addresses, but the FTX and GTX restrictions make it so that anyone who wants to *use* those signatures (and thus take the money) *must* create a transaction with exactly N outputs, where N is chosen by whoever originally published the signatures. I call this an ETX restriction. FTX = "Fewer than X," GTX = "Greater than X," and ETX = "Equal to X."</p>
+            <p>Is any of this useful? I'm not sure, it's certainly interesting to me, and that was enough for me to work on it. But I did think of one use case: an FTX restriction forces the spender's transaction to have more inputs than outputs, which means you can create and fund a bitcoin address that can only be spent from in a transaction that "cleans up" more utxos than it creates.</p>
+            <p>I worked on this a bit and expanded it so that you can generate an address that pays a future user only if they *create* 1 utxo but *consume* an arbitrary number, which devs can set. I call this the "cleanup restriction" and it seems like it might be useful for creating a kind of bounty hunting program that automatically pays people to clean up the utxo set. That sounds interesting to me, and maybe useful.</p>
+            <p>Anyway, that's the story behind why I made SSB playground. I hope you play around with it and have fun! Enjoy creating and testing restrictions that use the Sighash Single Bug in surprising, counterintuitive ways.</p>
+            <p><button class="learn_more">Close details</button></p>
+        </div>
+        <hr>
+        <p><button class="restriction_button ftx_restriction">FTX restriction</button> <button class="restriction_button gtx_restriction">GTX restriction</button> <button class="restriction_button etx_restriction">ETX restriction</button> <button class="restriction_button cleanup_restriction">Cleanup restriction</button></p>
         <div class="instructions_div">
             <p>Instructions:</p>
             <div class="instructions">
@@ -1007,17 +1432,25 @@
             </div>
         </div>
         <script>
+            $$( '.learn_more' ).forEach( item => item.onclick = () => {
+                if ( !$( '.details' ).classList.contains( "hidden" ) ) $( '.details' ).classList.add( "hidden" );
+                else $( '.details' ).classList.remove( "hidden" );
+            });
             $( '.ftx_restriction' ).onclick = async () => {
-                var network = cleanup_crew.network;
-                cleanup_crew.demoFTXRestriction( network );
+                var network = ssb_playground.network;
+                ssb_playground.demoFTXRestriction( network );
             }
             $( '.gtx_restriction' ).onclick = async () => {
-                var network = cleanup_crew.network;
-                cleanup_crew.demoGTXRestriction( network );
+                var network = ssb_playground.network;
+                ssb_playground.demoGTXRestriction( network );
+            }
+            $( '.etx_restriction' ).onclick = async () => {
+                var network = ssb_playground.network;
+                ssb_playground.demoETXRestriction( network );
             }
             $( '.cleanup_restriction' ).onclick = async () => {
-                var network = cleanup_crew.network;
-                cleanup_crew.demoCleanupRestriction( network );
+                var network = ssb_playground.network;
+                ssb_playground.demoCleanupRestriction( network );
             }
         </script>
     </body>
