@@ -39,7 +39,7 @@ Wallet devs are therefore discouraged from letting users "accidentally" sign the
 
 Recently, I realized that the bug can be exploited to do a basic form of transaction introspection. If you create a bitcoin script that "intentionally" exploits the sighash_single bug, it tells you information about the transaction that triggered it. A bitcoin script can require the user to pass in a signature that uses sighash_single and a pubkey, and check if the resulting signature is valid for the buggy sighash.
 
-If the bug triggers, then the bitcoin script knows that the "input position" of the utxo being spent is greater than position 1, because position 1 (or position 0, if you prefer indexing from 0) *always* has a matching output -- it's a consensus rule in bitcoin that every transaction has to have at least 1 address in the outputs. So if the bug is exploited, it has to happen at an index position higher than that.
+If the bug triggers, then the bitcoin script knows that the "input position" of the utxo being spent is greater than position 1, because position 1 (or position 0, if you prefer indexing from 0) *always* has a matching output -- it's a consensus rule in bitcoin that every transaction has to have at least 1 address in the outputs. (Or an op_return, or similar.) So if the bug is exploited, it has to happen at an index position higher than that.
 
 The same piece of information also tells the transaction that there is *at least* one more input than there are outputs. That is because the only way for the bug to trigger is if there is an input without a corresponding output -- so there must be more inputs than outputs.
 
