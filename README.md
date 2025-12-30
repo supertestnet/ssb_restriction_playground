@@ -33,7 +33,7 @@ The bug occurs if you sign the "third" input with sighash_single. It's *supposed
 
 Weird, huh?
 
-That strange bug causes several headaches. For example, if someone knows you have a bitcoin address containing a bunch of money, and they somehow convince you to sign that value with its private key, they can take your money. They have to manually create a bitcoin transaction that has your address in one of the inputs, e.g. in position 2, don't create an output in position 2, and add the signature they got from you in the signature field. Then they can use their own bitcoin addresses to fill any gaps in the input list, add one of their own bitcoin addresses as an output, and voila! Any money you had becomes theirs.
+That strange bug causes several headaches. For example, if someone knows you have a bitcoin address containing a bunch of money, and they somehow convince you to sign that message with its private key, they can take your money. They have to manually create a bitcoin transaction that has your address in one of the inputs, e.g. in position 2, don't create an output in position 2, and add the signature they got from you in the signature field. Then they can use their own bitcoin addresses to fill any gaps in the input list, add one of their own bitcoin addresses as an output, and voila! Any money you had becomes theirs.
 
 Wallet devs are therefore discouraged from letting users "accidentally" sign the above buggy sighash, as it can cause loss of funds. The segwit upgrade fixed this bug for all transactions that use segwit, but it's never been fixed for legacy transactions.
 
