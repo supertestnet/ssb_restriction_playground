@@ -12,8 +12,12 @@
             var ssb_playground = {
                 waiting: false,
                 network: "testnet",
-                explorer: "mutinynet.com",
-                network_name: "mutinynet",
+                // explorer: "mutinynet.com",
+                // network_name: "mutinynet",
+                // faucet_link: "https://faucet.mutinynet.com",
+                explorer: "mempool.space/testnet4",
+                network_name: "testnet4",
+                faucet_link: "https://mempool.space/testnet4/faucet",
                 in_progress: null,
                 waitSomeTime: num => new Promise( resolve => setTimeout( resolve, num ) ),
                 getRand: num => ssb_playground.bytesToHex( window.crypto.getRandomValues( new Uint8Array( num ) ) ),
@@ -29,7 +33,7 @@
                 },
                 getTxhex: async ( address, explorer ) => {
                     var loop = async () => {
-                        var first_url = `https://mutinynet.com/api/address/${address}/utxo`;
+                        var first_url = `https://${ssb_playground.explorer}/api/address/${address}/utxo`;
                         var utxo_data = await fetch( first_url );
                         var json = await utxo_data.json();
                         if ( json.length ) return json[ 0 ].txid;
@@ -37,7 +41,7 @@
                         return await loop();
                     }
                     var txid = await loop();
-                    var second_url = `https://mutinynet.com/api/tx/${txid}/hex`;
+                    var second_url = `https://${ssb_playground.explorer}/api/tx/${txid}/hex`;
                     var txhex_data = await fetch( second_url );
                     return await txhex_data.text();
                 },
@@ -382,7 +386,7 @@
                         <p>${restriction_address}</p>
                         <p>It is an anyone_can_spend address whose script contains an FTX restriction requiring the output count to be "fewer than" a certain number, namely, the input count. To prove that the script enforces that restriction, let us fund it and try to spend the money in a transaction *without* fewer outputs than inputs, just to see it fail, i.e. just to see the script enforce the restriction.</p>
                         <p>Fund the address with 10k sats on ${ssb_playground.network_name} and click ok when you are done.</p>
-                        <p>You can fund the address here: <a href="https://faucet.${ssb_playground.explorer}" target="_blank">https://faucet.${ssb_playground.explorer}</a></p>
+                        <p>You can fund the address here: <a href="${ssb_playground.faucet_link}" target="_blank">${ssb_playground.faucet_link}</a></p>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -436,6 +440,10 @@
                         <p>${invalid_tx.toHex()}</p>
                         <p>Broadcast the transaction on ${ssb_playground.network_name} and click ok when it inevitably fails with an error.</p>
                         <p>You can broadcast the transaction here: <a href="https://${ssb_playground.explorer}/tx/push" target="_blank">https://${ssb_playground.explorer}/tx/push</a></p>
+                        <p>To inspect your invalid transaction, go here: <a href="https://supertestnet.github.io/node_faker/" target="_blank">https://supertestnet.github.io/node_faker/</a> and run this command:</p>
+                        <div class="instructions_div">
+                            <p>bitcoin-cli decoderawtransaction insert_your_tx_hex_here</p>
+                        </div>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -454,7 +462,7 @@
                         <p>Now we will create a *valid* spending transaction, by adding one extra input, so that the transaction has fewer outputs than inputs, thus satisfying the restriction</p>
                         <p>Here is a "normal" bitcoin address -- send it 10k sats on ${ssb_playground.network_name} (this will become a second input to our transaction, thus making it valid) and click ok when you are done.</p>
                         <p>${address}</p>
-                        <p>You can fund the address here: <a href="https://faucet.${ssb_playground.explorer}" target="_blank">https://faucet.${ssb_playground.explorer}</a></p>
+                        <p>You can fund the address here: <a href="${ssb_playground.faucet_link}" target="_blank">${ssb_playground.faucet_link}</a></p>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -564,7 +572,7 @@
                         <p>${restriction_address}</p>
                         <p>It is an anyone_can_spend address whose script contains a GTX restriction requiring the output count to be "greater than" a certain number, namely, the input count minus one. To prove that the script enforces that restriction, let us fund it and try to spend the money in a transaction whose output count is *not* greater than that number, just to see it fail, i.e. just to see the script enforce the restriction.</p>
                         <p>Fund the address with 10k sats on ${ssb_playground.network_name} and click ok when you are done.</p>
-                        <p>You can fund the address here: <a href="https://faucet.${ssb_playground.explorer}" target="_blank">https://faucet.${ssb_playground.explorer}</a></p>
+                        <p>You can fund the address here: <a href="${ssb_playground.faucet_link}" target="_blank">${ssb_playground.faucet_link}</a></p>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -607,7 +615,7 @@
                         <p>Here is the "normal address":</p>
                         <p>${address}</p>
                         <p>Fund the address with 10k sats on ${ssb_playground.network_name} and click ok when you are done.</p>
-                        <p>You can fund the address here: <a href="https://faucet.${ssb_playground.explorer}" target="_blank">https://faucet.${ssb_playground.explorer}</a></p>
+                        <p>You can fund the address here: <a href="${ssb_playground.faucet_link}" target="_blank">${ssb_playground.faucet_link}</a></p>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -690,6 +698,10 @@
                         <p>${invalid_tx.toHex()}</p>
                         <p>Broadcast the transaction on ${ssb_playground.network_name} and click ok when it inevitably fails with an error.</p>
                         <p>You can broadcast the transaction here: <a href="https://${ssb_playground.explorer}/tx/push" target="_blank">https://${ssb_playground.explorer}/tx/push</a></p>
+                        <p>To inspect your invalid transaction, go here: <a href="https://supertestnet.github.io/node_faker/" target="_blank">https://supertestnet.github.io/node_faker/</a> and run this command:</p>
+                        <div class="instructions_div">
+                            <p>bitcoin-cli decoderawtransaction insert_your_tx_hex_here</p>
+                        </div>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -776,7 +788,7 @@
                     $( '.instructions' ).innerHTML = `
                         <p>To create a restriction that requires a future spender to create ${num_of_utxos.toLocaleString()} outputs, you have to create ${( num_of_utxos + 1 ).toLocaleString()} inputs. Fund the address below with ${( ( ( num_of_utxos + 1 ) * 540 ) + ( ( num_of_utxos + 1 ) * 47 ) ).toLocaleString()} sats on ${ssb_playground.network_name}. That is ${( num_of_utxos + 1 ).toLocaleString()} * 540 + ${( ( num_of_utxos + 1 ) * 47 ).toLocaleString()}. Each of the utxos you create will be funded with 540 sats, which is the dust limit for the types of addresses we're going to create. The extra ${( ( num_of_utxos + 1 ) * 47 ).toLocaleString()} will pay for mining fees.</p>
                         <p>${many_output_maker}</p>
-                        <p>You can fund the address here: <a href="https://faucet.${ssb_playground.explorer}" target="_blank">https://faucet.${ssb_playground.explorer}</a></p>
+                        <p>You can fund the address here: <a href="${ssb_playground.faucet_link}" target="_blank">${ssb_playground.faucet_link}</a></p>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -962,6 +974,10 @@
                         <p>${invalid_tx.toHex()}</p>
                         <p>Broadcast the transaction on ${ssb_playground.network_name} and click ok when it inevitably fails with an error.</p>
                         <p>You can broadcast the transaction here: <a href="https://${ssb_playground.explorer}/tx/push" target="_blank">https://${ssb_playground.explorer}/tx/push</a></p>
+                        <p>To inspect your invalid transaction, go here: <a href="https://supertestnet.github.io/node_faker/" target="_blank">https://supertestnet.github.io/node_faker/</a> and run this command:</p>
+                        <div class="instructions_div">
+                            <p>bitcoin-cli decoderawtransaction insert_your_tx_hex_here</p>
+                        </div>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -1030,6 +1046,10 @@
                         <p>${second_invalid_tx.toHex()}</p>
                         <p>Broadcast the transaction on ${ssb_playground.network_name} and click ok when it inevitably fails with an error.</p>
                         <p>You can broadcast the transaction here: <a href="https://${ssb_playground.explorer}/tx/push" target="_blank">https://${ssb_playground.explorer}/tx/push</a></p>
+                        <p>To inspect your invalid transaction, go here: <a href="https://supertestnet.github.io/node_faker/" target="_blank">https://supertestnet.github.io/node_faker/</a> and run this command:</p>
+                        <div class="instructions_div">
+                            <p>bitcoin-cli decoderawtransaction insert_your_tx_hex_here</p>
+                        </div>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -1136,7 +1156,7 @@
                         <p>To illustrate how it works, let us fund it and try to spend the money in a transaction with *only one* input, just to see it fail, i.e. just to see the script enforce the restriction.</p>
                         <p>Fund the address with 10k sats on ${ssb_playground.network_name} (this will become a second input to our transaction, thus making it valid) and click ok when you are done. Here is the restriction address again:</p>
                         <p>${restriction_address}</p>
-                        <p>You can fund the address here: <a href="https://faucet.${ssb_playground.explorer}" target="_blank">https://faucet.${ssb_playground.explorer}</a></p>
+                        <p>You can fund the address here: <a href="${ssb_playground.faucet_link}" target="_blank">${ssb_playground.faucet_link}</a></p>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -1208,7 +1228,7 @@
                         <p>The restriction will require us to consume 100+ utxos as inputs. However, 100 utxos do not necessarily exist yet on your regtest network. In fact, this app only knows 1 utxo that definitely exists: the one locked to the restriction address. So now we will make 99 more, so that a transaction we'll create later can consume them.</p>
                         <p>Fund the address below with 56,785 sats on ${ssb_playground.network_name}. That is 99 * 540 + 3,325. The 99 is for the 99 utxos, each of which will be funded with 540 sats, which is the dust limit for the types of addresses we're going to create. The extra 3,325 will pay for mining fees.</p>
                         <p>${ninety_nine_output_maker}</p>
-                        <p>You can fund the address here: <a href="https://faucet.${ssb_playground.explorer}" target="_blank">https://faucet.${ssb_playground.explorer}</a></p>
+                        <p>You can fund the address here: <a href="${ssb_playground.faucet_link}" target="_blank">${ssb_playground.faucet_link}</a></p>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -1312,6 +1332,10 @@
                         <p>${invalid_tx.toHex()}</p>
                         <p>Broadcast the transaction on ${ssb_playground.network_name} and click ok when it inevitably fails with an error.</p>
                         <p>You can broadcast the transaction here: <a href="https://${ssb_playground.explorer}/tx/push" target="_blank">https://${ssb_playground.explorer}/tx/push</a></p>
+                        <p>To inspect your invalid transaction, go here: <a href="https://supertestnet.github.io/node_faker/" target="_blank">https://supertestnet.github.io/node_faker/</a> and run this command:</p>
+                        <div class="instructions_div">
+                            <p>bitcoin-cli decoderawtransaction insert_your_tx_hex_here</p>
+                        </div>
                         <p><button class="continue">ok</button></p>
                     `;
                     window.scrollTo( 0, 0 );
@@ -1477,12 +1501,12 @@
                 <li>One input and one output (sighash_single | anyone_can_pay)</li>
                 <li>One input and zero outputs (sighash_none | anyone_can_pay)</li>
             </ol>
-            <p>The Sighash Single Bug affects two of these sighash flags: sighash_single and sighash_single | anyone_can_pay. If a wallet uses either of those sighashes while signing a transaction, the wallet is *supposed to* sign one output. But which one? The answer is: it depends on the input. Every input has a field where you're supposed to place the signature for whatever bitcoin address is in that "from" position. The field you put your signature in determines the input you're signing, and the output to sign must be selected by running an algorithm that looks at the index of whatever *input* is being signed and finds a "matching output" at the same index.</p>
+            <p>The Sighash Single Bug affects two of these sighash flags: sighash_single and sighash_single | anyone_can_pay. If a wallet uses either of those sighashes while signing a transaction, the wallet is *supposed to* sign one output. But which one? The answer is: the output to sign must be selected by running an algorithm that looks at the index of whatever *input* is being signed and finds a "matching output" at the same index.</p>
             <p>So, for example, suppose you are sending "from" 3 bitcoin addresses and sending "to" 2 bitcoin addresses. The three "from" addresses are part of your transaction's "inputs," and you have to create a signature for each one. If you sign the "first" input with sighash_single, it will also sign one output: the first output. If you sign the "second" input with sighash_single, it will also sign one output: the second output.</p>
             <p>The bug occurs if you sign the "third" input with sighash_single. It's *supposed to* sign a matching "third output," but there is none. The bug is, instead of causing the transaction to fail, a worse error happens: bitcoin expects your wallet to sign a sighash consisting of the number "01" followed by 62 zeroes. Here is the exact message ("sighash") it wants you to sign when this error happens:</p>
             <p class="instructions_div"><span>0100000000000000000000000000000000000000000000000000000000000000</span></p>
             <p>Weird, huh?</p>
-            <p>That strange bug causes several headaches. For example, if someone knows you have a bitcoin address containing a bunch of money, and they somehow convince you to sign that message with its private key, they can take your money. They have to manually create a bitcoin transaction that has your address in one of the inputs, e.g. in position 2, don't create an output in position 2, and add the signature they got from you in the signature field. Then they can use their own bitcoin addresses to fill any gaps in the input list, add one of their own bitcoin addresses as an output, and voila! Any money you had becomes theirs.</p>
+            <p>That strange bug causes several headaches. For example, if someone knows you have a bitcoin address containing a bunch of money, and they somehow convince you to sign that value with its private key, they can take your money. They have to manually create a bitcoin transaction that has your address in one of the inputs, e.g. in position 2, don't create an output in position 2, and add the signature they got from you in the signature field. Then they can use their own bitcoin addresses to fill any gaps in the input list, add one of their own bitcoin addresses as an output, and voila! Any money you had becomes theirs.</p>
             <p>Wallet devs are therefore discouraged from letting users "accidentally" sign the above buggy sighash, as it can cause loss of funds. The segwit upgrade fixed this bug for all transactions that use segwit, but it's never been fixed for legacy transactions.</p>
             <p>Recently, I realized that the bug can be exploited to do a basic form of transaction introspection. If you create a bitcoin script that "intentionally" exploits the sighash_single bug, it tells you information about the transaction that triggered it. A bitcoin script can require the user to pass in a signature that uses sighash_single and a pubkey, and check if the resulting signature is valid for the buggy sighash.</p>
             <p>If the bug triggers, then the bitcoin script knows that the "input position" of the utxo being spent is greater than position 1, because position 1 (or position 0, if you prefer indexing from 0) *always* has a matching output -- it's a consensus rule in bitcoin that every transaction has to have at least 1 address in the outputs. So if the bug is exploited, it has to happen at an index position higher than that.</p>
